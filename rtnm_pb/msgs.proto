@@ -1,0 +1,17 @@
+package rtnm_pb;
+
+message MSGS {
+    optional ProbeRegister PReg = 1;
+    optional MasterRegConfirm RConf = 2;
+}
+
+message ProbeRegister{
+    optional string ProbeIp = 1;
+    optional string ProbeLocation = 2;
+}
+
+message MasterRegConfirm{
+    optional uint32 ProbeKA = 1;
+    repeated string Tests = 2;
+}
+
