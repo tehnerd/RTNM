@@ -17,7 +17,7 @@ type CfgDict struct {
     Peer net.IP
     Location string
     Bind_IP net.IP
-    KA_interval int
+    KA_interval uint32
     Tests []string
 }
 
@@ -44,7 +44,7 @@ func ReadConfig() CfgDict{
                      }
                 case "ka_interval:":
                      ka,_ := strconv.Atoi(fields[1])
-                     cfg_dict.KA_interval = ka
+                     cfg_dict.KA_interval = uint32(ka)
                 case "tests:":
                     for cntr:=1;cntr < len(fields); cntr++{
                         cfg_dict.Tests = append(cfg_dict.Tests,fields[cntr])

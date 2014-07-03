@@ -12,6 +12,6 @@ message ProbeRegister{
 
 message MasterRegConfirm{
     optional uint32 ProbeKA = 1;
-    repeated string Tests = 2;
+    optional string TestsList = 2;
 }
 

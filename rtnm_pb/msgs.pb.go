@@ -71,9 +71,9 @@ func (m *ProbeRegister) GetProbeLocation() string {
 }
 
 type MasterRegConfirm struct {
-	ProbeKA          *uint32  `protobuf:"varint,1,opt" json:"ProbeKA,omitempty"`
-	Tests            []string `protobuf:"bytes,2,rep" json:"Tests,omitempty"`
-	XXX_unrecognized []byte   `json:"-"`
+	ProbeKA          *uint32 `protobuf:"varint,1,opt" json:"ProbeKA,omitempty"`
+	TestsList        *string `protobuf:"bytes,2,opt" json:"TestsList,omitempty"`
+	XXX_unrecognized []byte  `json:"-"`
 }
 
 func (m *MasterRegConfirm) Reset()         { *m = MasterRegConfirm{} }
@@ -87,11 +87,11 @@ func (m *MasterRegConfirm) GetProbeKA() uint32 {
 	return 0
 }
 
-func (m *MasterRegConfirm) GetTests() []string {
-	if m != nil {
-		return m.Tests
+func (m *MasterRegConfirm) GetTestsList() string {
+	if m != nil && m.TestsList != nil {
+		return *m.TestsList
 	}
-	return nil
+	return ""
 }
 
 func init() {
