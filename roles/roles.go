@@ -99,9 +99,12 @@ func WriteToTCP(sock *net.TCPConn, write_chan chan []byte,
 
 //initial syncing of probe's list to new probe
 func ProbeInitialSync(write_chan chan []byte, Probes map[string]ProbeDescrMaster,
-	LocalProbe *ProbeDescrMaster) {
+	LocalProbe *ProbeDescrMaster, mutex *sync.RWMutex) {
+	mutex.RLock()
+	defer mutex.RUnlock()
 	for ProbeID, ProbeDescr := range Probes {
 		if ProbeID != (*LocalProbe).IP.String() {
+			fmt.Println(ProbeDescr)
 			msg_pb := &rtnm_pb.MSGS{
 				AProbe: &rtnm_pb.AddProbe{
 					ProbeIp:       proto.String(ProbeDescr.IP.String()),
@@ -135,19 +138,22 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 	broker_pub_chan <- rtnm_pubsub.ProbeInfo{probe_descr.IP, probe_descr.Location, "Add"}
 	write_chan := make(chan []byte)
 	read_chan := make(chan []byte)
-	feedback_chan := make(chan int)
-	go ReadFromTCP(sock, msg_buf, read_chan, feedback_chan)
-	go WriteToTCP(sock, write_chan, feedback_chan)
-	ProbeInitialSync(write_chan, Probes, &probe_descr)
+	feedback_chan_r := make(chan int)
+	feedback_chan_w := make(chan int)
+	go ReadFromTCP(sock, msg_buf, read_chan, feedback_chan_r)
+	go WriteToTCP(sock, write_chan, feedback_chan_w)
+	ProbeInitialSync(write_chan, Probes, &probe_descr, mutex)
 	loop := 1
 	for loop == 1 {
 		select {
-		case <-feedback_chan:
+		case <-feedback_chan_r:
 			broker_pub_chan <- rtnm_pubsub.ProbeInfo{probe_descr.IP, probe_descr.Location, "Delete"}
+			mutex.Lock()
 			delete(Probes, probe_descr.IP.String())
+			mutex.Unlock()
 			broker_unsub_chan <- sub_chan
 			loop = 0
-			feedback_chan <- 1
+			feedback_chan_w <- 1
 		case <-time.After(time.Duration(cfg_dict.KA_interval) * time.Second * 3):
 			fmt.Println("probe timed out")
 		case msg_from_probe := <-read_chan:
@@ -193,7 +199,7 @@ func (PC *ProbeContext) setKA(keepalive uint32) { PC.KA_interval = keepalive }
 
 //Inital hello/registration msg to Master, sends Probe location etc
 func ProbeInitialHello(sock *net.TCPConn, context *ProbeContext,
-	cfg_dict *cfg.CfgDict, msg_buf []byte) {
+	cfg_dict *cfg.CfgDict, msg_buf []byte, Probes map[string]ProbeDescrProbe) {
 	init_hello := &rtnm_pb.MSGS{
 		PReg: &rtnm_pb.ProbeRegister{
 			ProbeIp:       proto.String(cfg_dict.Bind_IP.String()),
@@ -215,6 +221,14 @@ func ProbeInitialHello(sock *net.TCPConn, context *ProbeContext,
 	if msg.GetRConf() != nil {
 		context.setKA(msg.GetRConf().GetProbeKA())
 	}
+	/*HACK. initial msg should contain only RConf, but sometime, when we have
+	  tcp offloading it could contain AProbe TODO: workaround for tcp offloading cases */
+	if msg.GetAProbe() != nil {
+		Probes[msg.GetAProbe().GetProbeIp()] = ProbeDescrProbe{net.ParseIP(msg.GetAProbe().GetProbeIp()),
+			msg.GetAProbe().GetProbeLocation(), 0}
+		fmt.Println(Probes)
+	}
+
 }
 
 //Main probe's logic's implementation
@@ -227,13 +241,14 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	masterAddr.Port = cfg_dict.Port
 	master_conn, _ := net.DialTCP("tcp", nil, &masterAddr)
 	defer master_conn.Close()
-	ProbeInitialHello(master_conn, &probe_context, &cfg_dict, msg_buf)
+	ProbeInitialHello(master_conn, &probe_context, &cfg_dict, msg_buf, Probes)
 	fmt.Println(probe_context)
 	write_chan := make(chan []byte)
 	read_chan := make(chan []byte)
-	feedback_chan := make(chan int)
-	go ReadFromTCP(master_conn, msg_buf, read_chan, feedback_chan)
-	go WriteToTCP(master_conn, write_chan, feedback_chan)
+	feedback_chan_r := make(chan int)
+	feedback_chan_w := make(chan int)
+	go ReadFromTCP(master_conn, msg_buf, read_chan, feedback_chan_r)
+	go WriteToTCP(master_conn, write_chan, feedback_chan_w)
 	hello_msg := &rtnm_pb.MSGS{
 		Hello: &rtnm_pb.ProbeHello{
 			Hello: proto.String("PING"),
@@ -242,6 +257,7 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	rand.Seed(time.Now().Unix())
 	hello_data, _ := proto.Marshal(hello_msg)
 	loop := 1
+	fmt.Println(Probes)
 	for loop == 1 {
 		select {
 		case msg_from_master := <-read_chan:
@@ -254,15 +270,15 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 			if msg.GetAProbe() != nil {
 				Probes[msg.GetAProbe().GetProbeIp()] = ProbeDescrProbe{net.ParseIP(msg.GetAProbe().GetProbeIp()),
 					msg.GetAProbe().GetProbeLocation(), 0}
-				fmt.Println(Probes)
+				fmt.Println(msg)
 			} else if msg.GetRProbe() != nil {
 				fmt.Println(msg)
 				delete(Probes, msg.GetAProbe().GetProbeIp())
 			}
 		case <-time.After(time.Duration(probe_context.KA_interval+(probe_context.KA_interval/10*(rand.Uint32()%3))) * time.Second):
 			write_chan <- hello_data
-		case <-feedback_chan:
-			feedback_chan <- 1
+		case <-feedback_chan_r:
+			feedback_chan_w <- 1
 			loop = 0
 		}
 	}
