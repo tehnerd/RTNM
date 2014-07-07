@@ -1,17 +1,41 @@
 package rtnm_pb;
 
+/* metamessage; which we could test for submsg
+instead of implementing TLV logick directly */
 message MSGS {
     optional ProbeRegister PReg = 1;
     optional MasterRegConfirm RConf = 2;
+    optional ProbeHello Hello = 3;
+    optional AddProbe AProbe = 4;
+    optional RemoveProbe RProbe = 5;
 }
 
+//msg, which probe sends to master during startup
 message ProbeRegister{
     optional string ProbeIp = 1;
     optional string ProbeLocation = 2;
 }
 
+//msg from master to probe during startup
 message MasterRegConfirm{
     optional uint32 ProbeKA = 1;
     optional string TestsList = 2;
 }
 
+//keepalive msg
+message ProbeHello{
+    optional string Hello = 1;
+}
+
+/* msg from master to probe, master send it when
+new probe registers */
+message AddProbe{
+    optional string ProbeIp = 1;
+    optional string ProbeLocation = 2;
+}
+
+/* msg fro master to probe, master send it when
+some probe timed out */
+message RemoveProbe{
+    optional string ProbeIp = 1;
+}

@@ -12,6 +12,9 @@ It has these top-level messages:
 	MSGS
 	ProbeRegister
 	MasterRegConfirm
+	ProbeHello
+	AddProbe
+	RemoveProbe
 */
 package rtnm_pb
 
@@ -22,9 +25,14 @@ import math "math"
 var _ = proto.Marshal
 var _ = math.Inf
 
+// metamessage; which we could test for submsg
+// instead of implementing TLV logick directly
 type MSGS struct {
 	PReg             *ProbeRegister    `protobuf:"bytes,1,opt" json:"PReg,omitempty"`
 	RConf            *MasterRegConfirm `protobuf:"bytes,2,opt" json:"RConf,omitempty"`
+	Hello            *ProbeHello       `protobuf:"bytes,3,opt" json:"Hello,omitempty"`
+	AProbe           *AddProbe         `protobuf:"bytes,4,opt" json:"AProbe,omitempty"`
+	RProbe           *RemoveProbe      `protobuf:"bytes,5,opt" json:"RProbe,omitempty"`
 	XXX_unrecognized []byte            `json:"-"`
 }
 
@@ -46,6 +54,28 @@ func (m *MSGS) GetRConf() *MasterRegConfirm {
 	return nil
 }
 
+func (m *MSGS) GetHello() *ProbeHello {
+	if m != nil {
+		return m.Hello
+	}
+	return nil
+}
+
+func (m *MSGS) GetAProbe() *AddProbe {
+	if m != nil {
+		return m.AProbe
+	}
+	return nil
+}
+
+func (m *MSGS) GetRProbe() *RemoveProbe {
+	if m != nil {
+		return m.RProbe
+	}
+	return nil
+}
+
+// msg, which probe sends to master during startup
 type ProbeRegister struct {
 	ProbeIp          *string `protobuf:"bytes,1,opt" json:"ProbeIp,omitempty"`
 	ProbeLocation    *string `protobuf:"bytes,2,opt" json:"ProbeLocation,omitempty"`
@@ -70,6 +100,7 @@ func (m *ProbeRegister) GetProbeLocation() string {
 	return ""
 }
 
+// msg from master to probe during startup
 type MasterRegConfirm struct {
 	ProbeKA          *uint32 `protobuf:"varint,1,opt" json:"ProbeKA,omitempty"`
 	TestsList        *string `protobuf:"bytes,2,opt" json:"TestsList,omitempty"`
@@ -90,6 +121,67 @@ func (m *MasterRegConfirm) GetProbeKA() uint32 {
 func (m *MasterRegConfirm) GetTestsList() string {
 	if m != nil && m.TestsList != nil {
 		return *m.TestsList
+	}
+	return ""
+}
+
+// keepalive msg
+type ProbeHello struct {
+	Hello            *string `protobuf:"bytes,1,opt" json:"Hello,omitempty"`
+	XXX_unrecognized []byte  `json:"-"`
+}
+
+func (m *ProbeHello) Reset()         { *m = ProbeHello{} }
+func (m *ProbeHello) String() string { return proto.CompactTextString(m) }
+func (*ProbeHello) ProtoMessage()    {}
+
+func (m *ProbeHello) GetHello() string {
+	if m != nil && m.Hello != nil {
+		return *m.Hello
+	}
+	return ""
+}
+
+// msg from master to probe, master send it when
+// new probe registers
+type AddProbe struct {
+	ProbeIp          *string `protobuf:"bytes,1,opt" json:"ProbeIp,omitempty"`
+	ProbeLocation    *string `protobuf:"bytes,2,opt" json:"ProbeLocation,omitempty"`
+	XXX_unrecognized []byte  `json:"-"`
+}
+
+func (m *AddProbe) Reset()         { *m = AddProbe{} }
+func (m *AddProbe) String() string { return proto.CompactTextString(m) }
+func (*AddProbe) ProtoMessage()    {}
+
+func (m *AddProbe) GetProbeIp() string {
+	if m != nil && m.ProbeIp != nil {
+		return *m.ProbeIp
+	}
+	return ""
+}
+
+func (m *AddProbe) GetProbeLocation() string {
+	if m != nil && m.ProbeLocation != nil {
+		return *m.ProbeLocation
+	}
+	return ""
+}
+
+// msg fro master to probe, master send it when
+// some probe timed out
+type RemoveProbe struct {
+	ProbeIp          *string `protobuf:"bytes,1,opt" json:"ProbeIp,omitempty"`
+	XXX_unrecognized []byte  `json:"-"`
+}
+
+func (m *RemoveProbe) Reset()         { *m = RemoveProbe{} }
+func (m *RemoveProbe) String() string { return proto.CompactTextString(m) }
+func (*RemoveProbe) ProtoMessage()    {}
+
+func (m *RemoveProbe) GetProbeIp() string {
+	if m != nil && m.ProbeIp != nil {
+		return *m.ProbeIp
 	}
 	return ""
 }
