@@ -35,6 +35,13 @@ type UDPMessage struct {
 	TOS     int
 }
 
+type TimeStamps struct {
+	T1 int64
+	T2 int64
+	T3 int64
+	T4 int64
+}
+
 func ReadFromUDP(udpconn *net.UDPConn, cfg_dict cfg.CfgDict, msg_buf []byte,
 	read_chan chan UDPMessage) {
 	for {
@@ -132,6 +139,8 @@ func ProbeInitialRegister(sock *net.TCPConn, msg_buf []byte,
 	}
 	data, _ := proto.Marshal(reg_confirm)
 	sock.Write(data)
+	//hack to handle tcp offloading
+	sock.Read(msg_buf)
 	return ProbeDescr, nil
 }
 
@@ -251,7 +260,7 @@ func (PC *ProbeContext) setKA(keepalive uint32) { PC.KA_interval = keepalive }
 
 //Inital hello/registration msg to Master, sends Probe location etc
 func ProbeInitialHello(sock *net.TCPConn, context *ProbeContext,
-	cfg_dict *cfg.CfgDict, msg_buf []byte, Probes map[string]ProbeDescrProbe) {
+	cfg_dict *cfg.CfgDict, msg_buf []byte) {
 	init_hello := &rtnm_pb.MSGS{
 		PReg: &rtnm_pb.ProbeRegister{
 			ProbeIp:       proto.String(cfg_dict.Bind_IP.String()),
@@ -273,19 +282,13 @@ func ProbeInitialHello(sock *net.TCPConn, context *ProbeContext,
 	if msg.GetRConf() != nil {
 		context.setKA(msg.GetRConf().GetProbeKA())
 	}
-	/*HACK. initial msg should contain only RConf, but sometime, when we have
-	  tcp offloading it could contain AProbe TODO: workaround for tcp offloading cases */
-	if msg.GetAProbe() != nil {
-		Probes[msg.GetAProbe().GetProbeIp()] = ProbeDescrProbe{net.ParseIP(msg.GetAProbe().GetProbeIp()),
-			msg.GetAProbe().GetProbeLocation(), 0}
-		fmt.Println(Probes)
-	}
-
 }
 
-//Fucntion to calculates timeskew between probes
+//Fucntion to calculates timeskew between probes. if it's initial msg(from local to remote)
+//then we ignores ReceiveTime variable
 func TimeSkewCalculation(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
-	udp_write_chan chan UDPMessage) {
+	udp_write_chan chan UDPMessage, TimeStamp *TimeStamps,
+	ReceiveTime time.Time) {
 	remote_addr := strings.Join([]string{remote_probe.IP.String(),
 		strconv.Itoa((*cfg_dict).Port)}, ":")
 	udpaddr, err := net.ResolveUDPAddr("udp", remote_addr)
@@ -293,9 +296,26 @@ func TimeSkewCalculation(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
 		fmt.Println(err)
 		panic("cant resolve udp address")
 	}
+	if (*TimeStamp).T1 == 0 {
+		(*TimeStamp).T1 = time.Now().UnixNano()
+	} else if (*TimeStamp).T2 == 0 {
+		(*TimeStamp).T2 = ReceiveTime.UnixNano()
+		(*TimeStamp).T3 = time.Now().UnixNano()
+	}
+	timestamp_msg := &rtnm_pb.MSGS{
+		TStamp: &rtnm_pb.TimeStamps{
+			T1: proto.Int64((*TimeStamp).T1),
+			T2: proto.Int64((*TimeStamp).T2),
+			T3: proto.Int64((*TimeStamp).T3),
+		},
+	}
+	timestamp_data, err := proto.Marshal(timestamp_msg)
+	if err != nil {
+		panic("cant marshal time pb")
+	}
 	var msg UDPMessage
 	msg.UDPAddr = *udpaddr
-	msg.Message = []byte("hello there")
+	msg.Message = timestamp_data
 	msg.TOS = 192 //CS6
 	udp_write_chan <- msg
 }
@@ -323,7 +343,7 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	}
 	defer master_conn.Close()
 	defer udpconn.Close()
-	ProbeInitialHello(master_conn, &probe_context, &cfg_dict, msg_buf, Probes)
+	ProbeInitialHello(master_conn, &probe_context, &cfg_dict, msg_buf)
 	fmt.Println(probe_context)
 	write_chan := make(chan []byte)
 	read_chan := make(chan []byte)
@@ -342,6 +362,7 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	}
 	rand.Seed(time.Now().Unix())
 	hello_data, _ := proto.Marshal(hello_msg)
+	write_chan <- hello_data
 	loop := 1
 	fmt.Println(Probes)
 	for loop == 1 {
@@ -360,7 +381,9 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 				_, exist := Probes[NewProbe.IP.String()]
 				if !exist {
 					Probes[NewProbe.IP.String()] = NewProbe
-					go TimeSkewCalculation(NewProbe, &cfg_dict, udp_write_chan)
+					var TimeStamp TimeStamps
+					go TimeSkewCalculation(NewProbe, &cfg_dict, udp_write_chan,
+						&TimeStamp, time.Now())
 				}
 			}
 			if msg.GetRProbe() != nil {

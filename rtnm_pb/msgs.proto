@@ -8,6 +8,7 @@ message MSGS {
     optional ProbeHello Hello = 3;
     optional AddProbe AProbe = 4;
     optional RemoveProbe RProbe = 5;
+    optional TimeStamps TStamp = 6;
 }
 
 //msg, which probe sends to master during startup
@@ -34,8 +35,16 @@ message AddProbe{
     optional string ProbeLocation = 2;
 }
 
-/* msg fro master to probe, master send it when
+/* msg from master to probe, master send it when
 some probe timed out */
 message RemoveProbe{
     optional string ProbeIp = 1;
+}
+
+/* msg from probe to probe. we are using it to calculate timeskew
+between the nodes */
+message TimeStamps{
+    optional int64 T1 = 1; // local send
+    optional int64 T2 = 2; // remote receive
+    optional int64 T3 = 3; // remote send
 }

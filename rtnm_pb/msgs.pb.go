@@ -15,6 +15,7 @@ It has these top-level messages:
 	ProbeHello
 	AddProbe
 	RemoveProbe
+	TimeStamps
 */
 package rtnm_pb
 
@@ -33,6 +34,7 @@ type MSGS struct {
 	Hello            *ProbeHello       `protobuf:"bytes,3,opt" json:"Hello,omitempty"`
 	AProbe           *AddProbe         `protobuf:"bytes,4,opt" json:"AProbe,omitempty"`
 	RProbe           *RemoveProbe      `protobuf:"bytes,5,opt" json:"RProbe,omitempty"`
+	TStamp           *TimeStamps       `protobuf:"bytes,6,opt" json:"TStamp,omitempty"`
 	XXX_unrecognized []byte            `json:"-"`
 }
 
@@ -71,6 +73,13 @@ func (m *MSGS) GetAProbe() *AddProbe {
 func (m *MSGS) GetRProbe() *RemoveProbe {
 	if m != nil {
 		return m.RProbe
+	}
+	return nil
+}
+
+func (m *MSGS) GetTStamp() *TimeStamps {
+	if m != nil {
+		return m.TStamp
 	}
 	return nil
 }
@@ -168,7 +177,7 @@ func (m *AddProbe) GetProbeLocation() string {
 	return ""
 }
 
-// msg fro master to probe, master send it when
+// msg from master to probe, master send it when
 // some probe timed out
 type RemoveProbe struct {
 	ProbeIp          *string `protobuf:"bytes,1,opt" json:"ProbeIp,omitempty"`
@@ -184,6 +193,40 @@ func (m *RemoveProbe) GetProbeIp() string {
 		return *m.ProbeIp
 	}
 	return ""
+}
+
+// msg from probe to probe. we are using it to calculate timeskew
+// between the nodes
+type TimeStamps struct {
+	T1               *int64 `protobuf:"varint,1,opt,name=t1" json:"t1,omitempty"`
+	T2               *int64 `protobuf:"varint,2,opt,name=t2" json:"t2,omitempty"`
+	T3               *int64 `protobuf:"varint,3,opt,name=t3" json:"t3,omitempty"`
+	XXX_unrecognized []byte `json:"-"`
+}
+
+func (m *TimeStamps) Reset()         { *m = TimeStamps{} }
+func (m *TimeStamps) String() string { return proto.CompactTextString(m) }
+func (*TimeStamps) ProtoMessage()    {}
+
+func (m *TimeStamps) GetT1() int64 {
+	if m != nil && m.T1 != nil {
+		return *m.T1
+	}
+	return 0
+}
+
+func (m *TimeStamps) GetT2() int64 {
+	if m != nil && m.T2 != nil {
+		return *m.T2
+	}
+	return 0
+}
+
+func (m *TimeStamps) GetT3() int64 {
+	if m != nil && m.T3 != nil {
+		return *m.T3
+	}
+	return 0
 }
 
 func init() {
