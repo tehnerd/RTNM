@@ -9,6 +9,7 @@ message MSGS {
     optional AddProbe AProbe = 4;
     optional RemoveProbe RProbe = 5;
     optional TimeStamps TStamp = 6;
+    optional Report Rep = 7;
 }
 
 //msg, which probe sends to master during startup
@@ -47,5 +48,17 @@ message TimeStamps{
     optional int64 T1 = 1; // local send
     optional int64 T2 = 2; // remote receive
     optional int64 T3 = 3; // remote send
-    optional int32 TOS = 5; // TOS bit of the msg
+    optional int32 TOS = 4; // TOS bit of the msg
+}
+
+//latency tests report
+message Report{
+    optional int64 CS1 = 1;
+    optional int64 CS2 = 2;
+    optional int64 CS3 = 3;
+    optional int64 CS4 = 4;
+    optional int64 CS5 = 5;
+    optional int64 CS6 = 6;
+    optional string LocalSite = 7;
+    optional string RemoteSite = 8;
 }

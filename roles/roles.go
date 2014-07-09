@@ -35,6 +35,11 @@ type UDPMessage struct {
 	TOS     int32
 }
 
+type TestsReport struct {
+	Report   map[string]int64
+	PeerSite string
+}
+
 func ReadFromUDP(udpconn *net.UDPConn, cfg_dict cfg.CfgDict, msg_buf []byte,
 	read_chan chan UDPMessage) {
 	for {
@@ -218,7 +223,9 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 				fmt.Println(msg)
 				continue
 			}
-			fmt.Println(*msg)
+			if msg.GetRep() != nil {
+				fmt.Println(msg)
+			}
 		case probe_info := <-sub_chan.Chan:
 			if probe_info.Action == "Add" {
 				msg_pb := &rtnm_pb.MSGS{
@@ -291,9 +298,35 @@ func LatencyTestReply(msg UDPMessage, udp_write_chan chan UDPMessage) {
 	udp_write_chan <- GenerateUDPMessage(&msg.UDPAddr, reply_data, timestamp.TOS)
 }
 
+func PeriodicTests(Probes map[string]ProbeDescrProbe, udp_write_chan chan UDPMessage,
+	latency_test_chan chan UDPMessage, cfg_dict *cfg.CfgDict,
+	flag *int, mutex *sync.RWMutex, report_chan chan TestsReport) {
+	//TODO: add feedback chan
+	for {
+		time.Sleep(time.Duration(rand.Int31n(15)+10) * time.Second)
+		if len(Probes) != 0 {
+			//TODO: more sophisticated way to select remote probes
+			//this one is for tests only
+			probe_n := rand.Int31n(int32(len(Probes)))
+			cntr := 0
+			for _, value := range Probes {
+				if int32(cntr) == probe_n {
+					mutex.RUnlock()
+					*flag = 1
+					LatencyTest(value, cfg_dict, udp_write_chan,
+						latency_test_chan, flag, report_chan)
+					break
+				}
+				cntr++
+			}
+		}
+	}
+}
+
 //latency test initiated from our side
 func LatencyTest(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
-	udp_write_chan chan UDPMessage, rcvd_msg chan UDPMessage, flag *int) {
+	udp_write_chan chan UDPMessage, rcvd_msg chan UDPMessage, flag *int,
+	report_chan chan TestsReport) {
 	remote_addr := strings.Join([]string{remote_probe.IP.String(),
 		strconv.Itoa((*cfg_dict).Port)}, ":")
 	udpaddr, err := net.ResolveUDPAddr("udp", remote_addr)
@@ -301,6 +334,7 @@ func LatencyTest(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
 		fmt.Println(err)
 		panic("cant resolve udp address")
 	}
+	report := make(map[string]int64)
 	for class_name, tos := range timestamps.TOSMAP {
 		for pkt_cntr := 0; pkt_cntr < 10; pkt_cntr++ {
 			var timestamp timestamps.TimeStamps
@@ -312,7 +346,7 @@ func LatencyTest(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
 			select {
 			case msg := <-rcvd_msg:
 				timestamp := timestamps.ParseRcvdTimeMsg(msg.Message)
-				//this is msg from remote probe 
+				//this is msg from remote probe
 				if timestamp.T2 == 0 {
 					reply_data := timestamps.GenerateTimeMsg(&timestamp, msg.Time)
 					udp_write_chan <- GenerateUDPMessage(&msg.UDPAddr, reply_data, timestamp.TOS)
@@ -323,14 +357,45 @@ func LatencyTest(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
 					continue
 				}
 				RTT := timestamps.CalculateLatency(timestamp, msg.Time)
-				fmt.Println("rtt for class ", class_name, " was ", RTT/1000, " microsec")
+				if report[class_name] == 0 {
+					report[class_name] = RTT
+				} else {
+					report[class_name] = (report[class_name] + RTT) / 2
+				}
 				pkt_cntr++
 			case <-time.After(1 * time.Second):
+				_, exist := report[class_name]
+				if !exist {
+					report[class_name] = 0
+				}
 				pkt_cntr = 10
 			}
 		}
 	}
 	*flag = 0
+	result := TestsReport{report, remote_probe.Location}
+	report_chan <- result
+}
+
+func GenerateReport(report *TestsReport, cfg_dict *cfg.CfgDict) []byte {
+	msg := &rtnm_pb.MSGS{
+		Rep: &rtnm_pb.Report{
+			//hardcode of classes but shouldnt be an issue
+			CS1:        proto.Int64((*report).Report["CS1"]),
+			CS2:        proto.Int64((*report).Report["CS2"]),
+			CS3:        proto.Int64((*report).Report["CS3"]),
+			CS4:        proto.Int64((*report).Report["CS4"]),
+			CS5:        proto.Int64((*report).Report["CS5"]),
+			CS6:        proto.Int64((*report).Report["CS6"]),
+			LocalSite:  proto.String((*cfg_dict).Location),
+			RemoteSite: proto.String((*report).PeerSite),
+		},
+	}
+	data, err := proto.Marshal(msg)
+	if err != nil {
+		panic("we cant generate report")
+	}
+	return data
 }
 
 //TODO: feedback chan. right now could hang forever in case
@@ -353,13 +418,12 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	Probes := make(map[string]ProbeDescrProbe)
 	masterAddr.IP = cfg_dict.Master
 	masterAddr.Port = cfg_dict.Port
-    lladr.IP = cfg_dict.Bind_IP
+	lladr.IP = cfg_dict.Bind_IP
 	master_conn, _ := net.DialTCP("tcp", &lladr, &masterAddr)
 	udp_lladr := strings.Join([]string{cfg_dict.Bind_IP.String(),
 		strconv.Itoa(cfg_dict.Port)}, ":")
 	udpaddr, err := net.ResolveUDPAddr("udp", udp_lladr)
 	if err != nil {
-		fmt.Println(err)
 		panic("cant resolve udp address")
 	}
 	udpconn, err := net.ListenUDP("udp", udpaddr)
@@ -369,15 +433,16 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	defer master_conn.Close()
 	defer udpconn.Close()
 	ProbeInitialHello(master_conn, &probe_context, &cfg_dict, msg_buf)
-	fmt.Println(probe_context)
 	write_chan := make(chan []byte)
 	read_chan := make(chan []byte)
 	udp_write_chan := make(chan UDPMessage)
 	udp_read_chan := make(chan UDPMessage)
 	//not sure that this(buffered chan) is good idea, will test and decide after
 	latency_test_chan := make(chan UDPMessage, 100)
+	report_chan := make(chan TestsReport)
 	feedback_chan_r := make(chan int)
 	feedback_chan_w := make(chan int)
+	var mutex sync.RWMutex
 	go ReadFromTCP(master_conn, msg_buf, read_chan, feedback_chan_r)
 	go WriteToTCP(master_conn, write_chan, feedback_chan_w)
 	go ReadFromUDP(udpconn, cfg_dict, udp_msg_buf, udp_read_chan)
@@ -393,7 +458,8 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	go send_keepalive(hello_data, write_chan, probe_context.KA_interval)
 	loop := 1
 	test_running := 0
-	fmt.Println(Probes)
+	go PeriodicTests(Probes, udp_write_chan, latency_test_chan, &cfg_dict,
+		&test_running, &mutex, report_chan)
 	for loop == 1 {
 		select {
 		case msg_from_master := <-read_chan:
@@ -407,20 +473,27 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 			if msg.GetAProbe() != nil {
 				NewProbe := ProbeDescrProbe{net.ParseIP(msg.GetAProbe().GetProbeIp()),
 					msg.GetAProbe().GetProbeLocation()}
+				mutex.RLock()
 				_, exist := Probes[NewProbe.IP.String()]
+				mutex.RUnlock()
 				if !exist {
+					mutex.Lock()
 					Probes[NewProbe.IP.String()] = NewProbe
+					mutex.Unlock()
 				}
 			}
 			if msg.GetRProbe() != nil {
 				//TODO: add logic in case of two masters
+				mutex.Lock()
 				delete(Probes, msg.GetRProbe().GetProbeIp())
+				mutex.Unlock()
 			}
 		case msg_from_probe := <-udp_read_chan:
 			msg := &rtnm_pb.MSGS{}
 			err := proto.Unmarshal(msg_from_probe.Message, msg)
 			if err != nil {
 				fmt.Println("error during unmarshal")
+				fmt.Println(err)
 				continue
 			}
 			if msg.GetTStamp() != nil {
@@ -433,19 +506,9 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 		case <-feedback_chan_r:
 			feedback_chan_w <- 1
 			loop = 0
-		case <-time.After(time.Duration(rand.Int31n(15)) * time.Second):
-			if test_running == 0 && len(Probes) != 0 {
-				probe_n := rand.Int31n(int32(len(Probes)))
-				cntr := 0
-				for _, value := range Probes {
-					if int32(cntr) == probe_n {
-                        test_running = 1
-						go LatencyTest(value, &cfg_dict, udp_write_chan,
-							latency_test_chan, &test_running)
-					}
-					cntr++
-				}
-			}
+		case report := <-report_chan:
+			data := GenerateReport(&report, &cfg_dict)
+			write_chan <- data
 		}
 	}
 	return

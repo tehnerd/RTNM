@@ -16,6 +16,7 @@ It has these top-level messages:
 	AddProbe
 	RemoveProbe
 	TimeStamps
+	Report
 */
 package rtnm_pb
 
@@ -35,6 +36,7 @@ type MSGS struct {
 	AProbe           *AddProbe         `protobuf:"bytes,4,opt" json:"AProbe,omitempty"`
 	RProbe           *RemoveProbe      `protobuf:"bytes,5,opt" json:"RProbe,omitempty"`
 	TStamp           *TimeStamps       `protobuf:"bytes,6,opt" json:"TStamp,omitempty"`
+	Rep              *Report           `protobuf:"bytes,7,opt" json:"Rep,omitempty"`
 	XXX_unrecognized []byte            `json:"-"`
 }
 
@@ -80,6 +82,13 @@ func (m *MSGS) GetRProbe() *RemoveProbe {
 func (m *MSGS) GetTStamp() *TimeStamps {
 	if m != nil {
 		return m.TStamp
+	}
+	return nil
+}
+
+func (m *MSGS) GetRep() *Report {
+	if m != nil {
+		return m.Rep
 	}
 	return nil
 }
@@ -201,7 +210,7 @@ type TimeStamps struct {
 	T1               *int64 `protobuf:"varint,1,opt" json:"T1,omitempty"`
 	T2               *int64 `protobuf:"varint,2,opt" json:"T2,omitempty"`
 	T3               *int64 `protobuf:"varint,3,opt" json:"T3,omitempty"`
-	TOS              *int32 `protobuf:"varint,5,opt" json:"TOS,omitempty"`
+	TOS              *int32 `protobuf:"varint,4,opt" json:"TOS,omitempty"`
 	XXX_unrecognized []byte `json:"-"`
 }
 
@@ -235,6 +244,79 @@ func (m *TimeStamps) GetTOS() int32 {
 		return *m.TOS
 	}
 	return 0
+}
+
+// latency tests report
+type Report struct {
+	CS1              *int64  `protobuf:"varint,1,opt" json:"CS1,omitempty"`
+	CS2              *int64  `protobuf:"varint,2,opt" json:"CS2,omitempty"`
+	CS3              *int64  `protobuf:"varint,3,opt" json:"CS3,omitempty"`
+	CS4              *int64  `protobuf:"varint,4,opt" json:"CS4,omitempty"`
+	CS5              *int64  `protobuf:"varint,5,opt" json:"CS5,omitempty"`
+	CS6              *int64  `protobuf:"varint,6,opt" json:"CS6,omitempty"`
+	LocalSite        *string `protobuf:"bytes,7,opt" json:"LocalSite,omitempty"`
+	RemoteSite       *string `protobuf:"bytes,8,opt" json:"RemoteSite,omitempty"`
+	XXX_unrecognized []byte  `json:"-"`
+}
+
+func (m *Report) Reset()         { *m = Report{} }
+func (m *Report) String() string { return proto.CompactTextString(m) }
+func (*Report) ProtoMessage()    {}
+
+func (m *Report) GetCS1() int64 {
+	if m != nil && m.CS1 != nil {
+		return *m.CS1
+	}
+	return 0
+}
+
+func (m *Report) GetCS2() int64 {
+	if m != nil && m.CS2 != nil {
+		return *m.CS2
+	}
+	return 0
+}
+
+func (m *Report) GetCS3() int64 {
+	if m != nil && m.CS3 != nil {
+		return *m.CS3
+	}
+	return 0
+}
+
+func (m *Report) GetCS4() int64 {
+	if m != nil && m.CS4 != nil {
+		return *m.CS4
+	}
+	return 0
+}
+
+func (m *Report) GetCS5() int64 {
+	if m != nil && m.CS5 != nil {
+		return *m.CS5
+	}
+	return 0
+}
+
+func (m *Report) GetCS6() int64 {
+	if m != nil && m.CS6 != nil {
+		return *m.CS6
+	}
+	return 0
+}
+
+func (m *Report) GetLocalSite() string {
+	if m != nil && m.LocalSite != nil {
+		return *m.LocalSite
+	}
+	return ""
+}
+
+func (m *Report) GetRemoteSite() string {
+	if m != nil && m.RemoteSite != nil {
+		return *m.RemoteSite
+	}
+	return ""
 }
 
 func init() {
