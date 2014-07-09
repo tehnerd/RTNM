@@ -10,6 +10,7 @@ import (
 	"rtnm/rtnm_pb"
 	"rtnm/rtnm_pubsub"
 	"rtnm/timestamps"
+    "rtnm/reporter"
 	"strconv"
 	"strings"
 	"sync"
@@ -200,8 +201,10 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 	read_chan := make(chan []byte)
 	feedback_chan_r := make(chan int)
 	feedback_chan_w := make(chan int)
+    external_report_chan := make(chan []byte, 100)
 	go ReadFromTCP(sock, msg_buf, read_chan, feedback_chan_r)
 	go WriteToTCP(sock, write_chan, feedback_chan_w)
+    go reporter.CollectReport(external_report_chan)
 	ProbeInitialSync(write_chan, Probes, &probe_descr, mutex)
 	loop := 1
 	for loop == 1 {
@@ -224,7 +227,7 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 				continue
 			}
 			if msg.GetRep() != nil {
-				fmt.Println(msg)
+                external_report_chan <- msg_from_probe
 			}
 		case probe_info := <-sub_chan.Chan:
 			if probe_info.Action == "Add" {
