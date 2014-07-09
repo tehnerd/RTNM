@@ -53,12 +53,12 @@ func ParseRcvdTimeMsg(data []byte) TimeStamps {
 	proto.Unmarshal(data, msg)
 	var timestamp TimeStamps
 	timestamp.T1 = msg.GetTStamp().GetT1()
-	timestamp.T2 = msg.GetTStamp().GetT1()
-	timestamp.T3 = msg.GetTStamp().GetT1()
+	timestamp.T2 = msg.GetTStamp().GetT2()
+	timestamp.T3 = msg.GetTStamp().GetT3()
 	timestamp.TOS = msg.GetTStamp().GetTOS()
 	return timestamp
 }
 
-func CalculateLatency(TimeStamp *TimeStamps, ReceiveTime time.Time) int64 {
+func CalculateLatency(TimeStamp TimeStamps, ReceiveTime time.Time) int64 {
 	return (ReceiveTime.UnixNano() - (TimeStamp.T3 - TimeStamp.T2) - TimeStamp.T1)
 }

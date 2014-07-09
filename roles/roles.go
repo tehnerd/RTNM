@@ -301,7 +301,6 @@ func LatencyTest(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
 		fmt.Println(err)
 		panic("cant resolve udp address")
 	}
-	*flag = 1
 	for class_name, tos := range timestamps.TOSMAP {
 		for pkt_cntr := 0; pkt_cntr < 10; pkt_cntr++ {
 			var timestamp timestamps.TimeStamps
@@ -312,24 +311,22 @@ func LatencyTest(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
 		for pkt_cntr := 0; pkt_cntr < 10; {
 			select {
 			case msg := <-rcvd_msg:
-				//this is msg from remote probe which are not the target of our tests
-				//we can answear it immediately
 				timestamp := timestamps.ParseRcvdTimeMsg(msg.Message)
-				if msg.UDPAddr.String() != (*udpaddr).String() || timestamp.T2 == 0 {
+				//this is msg from remote probe 
+				if timestamp.T2 == 0 {
 					reply_data := timestamps.GenerateTimeMsg(&timestamp, msg.Time)
-					udp_write_chan <- GenerateUDPMessage(&msg.UDPAddr, reply_data, tos)
+					udp_write_chan <- GenerateUDPMessage(&msg.UDPAddr, reply_data, timestamp.TOS)
 					continue
 				}
 				//this is msg from previous tests, which came after timeout, so we ignore it
 				if timestamp.TOS != tos {
 					continue
 				}
-				RTT := timestamps.CalculateLatency(&timestamp, msg.Time)
+				RTT := timestamps.CalculateLatency(timestamp, msg.Time)
 				fmt.Println("rtt for class ", class_name, " was ", RTT/1000, " microsec")
 				pkt_cntr++
 			case <-time.After(1 * time.Second):
 				pkt_cntr = 10
-				fmt.Println(" testtimedout")
 			}
 		}
 	}
@@ -349,14 +346,15 @@ func send_keepalive(keepalive []byte, write_chan chan []byte,
 
 //Main probe's logic's implementation
 func StartProbe(cfg_dict cfg.CfgDict) {
-	var masterAddr net.TCPAddr
+	var lladr, masterAddr net.TCPAddr
 	msg_buf := make([]byte, 9000)
 	udp_msg_buf := make([]byte, 9000)
 	var probe_context ProbeContext
 	Probes := make(map[string]ProbeDescrProbe)
 	masterAddr.IP = cfg_dict.Master
 	masterAddr.Port = cfg_dict.Port
-	master_conn, _ := net.DialTCP("tcp", nil, &masterAddr)
+    lladr.IP = cfg_dict.Bind_IP
+	master_conn, _ := net.DialTCP("tcp", &lladr, &masterAddr)
 	udp_lladr := strings.Join([]string{cfg_dict.Bind_IP.String(),
 		strconv.Itoa(cfg_dict.Port)}, ":")
 	udpaddr, err := net.ResolveUDPAddr("udp", udp_lladr)
@@ -412,11 +410,6 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 				_, exist := Probes[NewProbe.IP.String()]
 				if !exist {
 					Probes[NewProbe.IP.String()] = NewProbe
-					/*
-						var TimeStamp timestamps.TimeStamps
-						go TimeSkewCalculation(NewProbe, &cfg_dict, udp_write_chan,
-							&TimeStamp, time.Now())
-					*/
 				}
 			}
 			if msg.GetRProbe() != nil {
@@ -446,6 +439,7 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 				cntr := 0
 				for _, value := range Probes {
 					if int32(cntr) == probe_n {
+                        test_running = 1
 						go LatencyTest(value, &cfg_dict, udp_write_chan,
 							latency_test_chan, &test_running)
 					}
