@@ -183,7 +183,8 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 	mutex *sync.RWMutex,
 	broker_sub_chan chan rtnm_pubsub.PubSubMeta,
 	broker_unsub_chan chan rtnm_pubsub.PubSubMeta,
-	broker_pub_chan chan rtnm_pubsub.ProbeInfo) {
+	broker_pub_chan chan rtnm_pubsub.ProbeInfo,
+    external_report_chan chan []byte) {
 	sock.SetNoDelay(true)
 	msg_buf := make([]byte, 9000)
 	defer sock.Close()
@@ -201,10 +202,8 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 	read_chan := make(chan []byte)
 	feedback_chan_r := make(chan int)
 	feedback_chan_w := make(chan int)
-    external_report_chan := make(chan []byte, 100)
 	go ReadFromTCP(sock, msg_buf, read_chan, feedback_chan_r)
 	go WriteToTCP(sock, write_chan, feedback_chan_w)
-    go reporter.CollectReport(external_report_chan)
 	ProbeInitialSync(write_chan, Probes, &probe_descr, mutex)
 	loop := 1
 	for loop == 1 {
@@ -527,7 +526,9 @@ func StartMaster(cfg_dict cfg.CfgDict) {
 	sub_chan := make(chan rtnm_pubsub.PubSubMeta)
 	unsub_chan := make(chan rtnm_pubsub.PubSubMeta)
 	pub_chan := make(chan rtnm_pubsub.ProbeInfo)
+    external_report_chan := make(chan []byte, 100)
 	go rtnm_pubsub.StartBroker(sub_chan, unsub_chan, pub_chan)
+    go reporter.CollectReportGraphite(external_report_chan, cfg_dict)
 	master_socket, err := net.ListenTCP("tcp", &tcpAddr)
 	if err != nil {
 		fmt.Println("cant open tcp socket")
@@ -536,6 +537,6 @@ func StartMaster(cfg_dict cfg.CfgDict) {
 	for {
 		probe_conn, _ := master_socket.AcceptTCP()
 		go ControlProbe(probe_conn, cfg_dict, Probes, &probes_mutex,
-			sub_chan, unsub_chan, pub_chan)
+			sub_chan, unsub_chan, pub_chan, external_report_chan)
 	}
 }
