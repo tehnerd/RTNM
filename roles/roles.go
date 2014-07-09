@@ -9,6 +9,7 @@ import (
 	"rtnm/cfg"
 	"rtnm/rtnm_pb"
 	"rtnm/rtnm_pubsub"
+	"rtnm/timestamps"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,21 +26,13 @@ type ProbeDescrMaster struct {
 type ProbeDescrProbe struct {
 	IP       net.IP
 	Location string
-	TimeSkew int64
 }
 
 type UDPMessage struct {
 	UDPAddr net.UDPAddr
 	Message []byte
 	Time    time.Time
-	TOS     int
-}
-
-type TimeStamps struct {
-	T1 int64
-	T2 int64
-	T3 int64
-	T4 int64
+	TOS     int32
 }
 
 func ReadFromUDP(udpconn *net.UDPConn, cfg_dict cfg.CfgDict, msg_buf []byte,
@@ -62,11 +55,10 @@ func WriteToUDP(udpconn *net.UDPConn, cfg_dict cfg.CfgDict,
 	write_chan chan UDPMessage) {
 	for {
 		msg := <-write_chan
-		if msg.TOS != 0 {
-			fd, _ := udpconn.File()
-			syscall.SetsockoptInt(int(fd.Fd()), syscall.IPPROTO_IP, syscall.IP_TOS, msg.TOS)
-			fd.Close()
-		}
+		fd, _ := udpconn.File()
+		syscall.SetsockoptInt(int(fd.Fd()), syscall.IPPROTO_IP, syscall.IP_TOS,
+			int(msg.TOS))
+		fd.Close()
 		udpconn.WriteToUDP(msg.Message, &msg.UDPAddr)
 	}
 }
@@ -284,11 +276,24 @@ func ProbeInitialHello(sock *net.TCPConn, context *ProbeContext,
 	}
 }
 
-//Fucntion to calculates timeskew between probes. if it's initial msg(from local to remote)
-//then we ignores ReceiveTime variable
-func TimeSkewCalculation(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
-	udp_write_chan chan UDPMessage, TimeStamp *TimeStamps,
-	ReceiveTime time.Time) {
+func GenerateUDPMessage(udpaddr *net.UDPAddr, msg []byte, tos int32) UDPMessage {
+	var udpmsg UDPMessage
+	udpmsg.UDPAddr = *udpaddr
+	udpmsg.Message = msg
+	udpmsg.TOS = tos
+	return udpmsg
+}
+
+//reply for latency test, initiated from retmote side in case we arent running local one
+func LatencyTestReply(msg UDPMessage, udp_write_chan chan UDPMessage) {
+	timestamp := timestamps.ParseRcvdTimeMsg(msg.Message)
+	reply_data := timestamps.GenerateTimeMsg(&timestamp, msg.Time)
+	udp_write_chan <- GenerateUDPMessage(&msg.UDPAddr, reply_data, timestamp.TOS)
+}
+
+//latency test initiated from our side
+func LatencyTest(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
+	udp_write_chan chan UDPMessage, rcvd_msg chan UDPMessage, flag *int) {
 	remote_addr := strings.Join([]string{remote_probe.IP.String(),
 		strconv.Itoa((*cfg_dict).Port)}, ":")
 	udpaddr, err := net.ResolveUDPAddr("udp", remote_addr)
@@ -296,28 +301,50 @@ func TimeSkewCalculation(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
 		fmt.Println(err)
 		panic("cant resolve udp address")
 	}
-	if (*TimeStamp).T1 == 0 {
-		(*TimeStamp).T1 = time.Now().UnixNano()
-	} else if (*TimeStamp).T2 == 0 {
-		(*TimeStamp).T2 = ReceiveTime.UnixNano()
-		(*TimeStamp).T3 = time.Now().UnixNano()
+	*flag = 1
+	for class_name, tos := range timestamps.TOSMAP {
+		for pkt_cntr := 0; pkt_cntr < 10; pkt_cntr++ {
+			var timestamp timestamps.TimeStamps
+			timestamp.TOS = tos
+			msg_data := timestamps.GenerateTimeMsg(&timestamp, time.Now())
+			udp_write_chan <- GenerateUDPMessage(udpaddr, msg_data, tos)
+		}
+		for pkt_cntr := 0; pkt_cntr < 10; {
+			select {
+			case msg := <-rcvd_msg:
+				//this is msg from remote probe which are not the target of our tests
+				//we can answear it immediately
+				timestamp := timestamps.ParseRcvdTimeMsg(msg.Message)
+				if msg.UDPAddr.String() != (*udpaddr).String() || timestamp.T2 == 0 {
+					reply_data := timestamps.GenerateTimeMsg(&timestamp, msg.Time)
+					udp_write_chan <- GenerateUDPMessage(&msg.UDPAddr, reply_data, tos)
+					continue
+				}
+				//this is msg from previous tests, which came after timeout, so we ignore it
+				if timestamp.TOS != tos {
+					continue
+				}
+				RTT := timestamps.CalculateLatency(&timestamp, msg.Time)
+				fmt.Println("rtt for class ", class_name, " was ", RTT/1000, " microsec")
+				pkt_cntr++
+			case <-time.After(1 * time.Second):
+				pkt_cntr = 10
+				fmt.Println(" testtimedout")
+			}
+		}
 	}
-	timestamp_msg := &rtnm_pb.MSGS{
-		TStamp: &rtnm_pb.TimeStamps{
-			T1: proto.Int64((*TimeStamp).T1),
-			T2: proto.Int64((*TimeStamp).T2),
-			T3: proto.Int64((*TimeStamp).T3),
-		},
+	*flag = 0
+}
+
+//TODO: feedback chan. right now could hang forever in case
+//of dead master
+func send_keepalive(keepalive []byte, write_chan chan []byte,
+	ka_interval uint32) {
+	loop := 1
+	for loop == 1 {
+		time.Sleep(time.Duration(ka_interval) * time.Second)
+		write_chan <- keepalive
 	}
-	timestamp_data, err := proto.Marshal(timestamp_msg)
-	if err != nil {
-		panic("cant marshal time pb")
-	}
-	var msg UDPMessage
-	msg.UDPAddr = *udpaddr
-	msg.Message = timestamp_data
-	msg.TOS = 192 //CS6
-	udp_write_chan <- msg
 }
 
 //Main probe's logic's implementation
@@ -349,6 +376,8 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	read_chan := make(chan []byte)
 	udp_write_chan := make(chan UDPMessage)
 	udp_read_chan := make(chan UDPMessage)
+	//not sure that this(buffered chan) is good idea, will test and decide after
+	latency_test_chan := make(chan UDPMessage, 100)
 	feedback_chan_r := make(chan int)
 	feedback_chan_w := make(chan int)
 	go ReadFromTCP(master_conn, msg_buf, read_chan, feedback_chan_r)
@@ -363,7 +392,9 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	rand.Seed(time.Now().Unix())
 	hello_data, _ := proto.Marshal(hello_msg)
 	write_chan <- hello_data
+	go send_keepalive(hello_data, write_chan, probe_context.KA_interval)
 	loop := 1
+	test_running := 0
 	fmt.Println(Probes)
 	for loop == 1 {
 		select {
@@ -377,13 +408,15 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 			fmt.Println(msg)
 			if msg.GetAProbe() != nil {
 				NewProbe := ProbeDescrProbe{net.ParseIP(msg.GetAProbe().GetProbeIp()),
-					msg.GetAProbe().GetProbeLocation(), 0}
+					msg.GetAProbe().GetProbeLocation()}
 				_, exist := Probes[NewProbe.IP.String()]
 				if !exist {
 					Probes[NewProbe.IP.String()] = NewProbe
-					var TimeStamp TimeStamps
-					go TimeSkewCalculation(NewProbe, &cfg_dict, udp_write_chan,
-						&TimeStamp, time.Now())
+					/*
+						var TimeStamp timestamps.TimeStamps
+						go TimeSkewCalculation(NewProbe, &cfg_dict, udp_write_chan,
+							&TimeStamp, time.Now())
+					*/
 				}
 			}
 			if msg.GetRProbe() != nil {
@@ -391,13 +424,34 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 				delete(Probes, msg.GetRProbe().GetProbeIp())
 			}
 		case msg_from_probe := <-udp_read_chan:
-			fmt.Println(msg_from_probe)
-		case <-time.After(time.Duration(probe_context.KA_interval+
-			(probe_context.KA_interval/10*(rand.Uint32()%3))) * time.Second):
-			write_chan <- hello_data
+			msg := &rtnm_pb.MSGS{}
+			err := proto.Unmarshal(msg_from_probe.Message, msg)
+			if err != nil {
+				fmt.Println("error during unmarshal")
+				continue
+			}
+			if msg.GetTStamp() != nil {
+				if test_running != 0 {
+					latency_test_chan <- msg_from_probe
+				} else {
+					go LatencyTestReply(msg_from_probe, udp_write_chan)
+				}
+			}
 		case <-feedback_chan_r:
 			feedback_chan_w <- 1
 			loop = 0
+		case <-time.After(time.Duration(rand.Int31n(15)) * time.Second):
+			if test_running == 0 && len(Probes) != 0 {
+				probe_n := rand.Int31n(int32(len(Probes)))
+				cntr := 0
+				for _, value := range Probes {
+					if int32(cntr) == probe_n {
+						go LatencyTest(value, &cfg_dict, udp_write_chan,
+							latency_test_chan, &test_running)
+					}
+					cntr++
+				}
+			}
 		}
 	}
 	return

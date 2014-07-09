@@ -198,9 +198,10 @@ func (m *RemoveProbe) GetProbeIp() string {
 // msg from probe to probe. we are using it to calculate timeskew
 // between the nodes
 type TimeStamps struct {
-	T1               *int64 `protobuf:"varint,1,opt,name=t1" json:"t1,omitempty"`
-	T2               *int64 `protobuf:"varint,2,opt,name=t2" json:"t2,omitempty"`
-	T3               *int64 `protobuf:"varint,3,opt,name=t3" json:"t3,omitempty"`
+	T1               *int64 `protobuf:"varint,1,opt" json:"T1,omitempty"`
+	T2               *int64 `protobuf:"varint,2,opt" json:"T2,omitempty"`
+	T3               *int64 `protobuf:"varint,3,opt" json:"T3,omitempty"`
+	TOS              *int32 `protobuf:"varint,5,opt" json:"TOS,omitempty"`
 	XXX_unrecognized []byte `json:"-"`
 }
 
@@ -225,6 +226,13 @@ func (m *TimeStamps) GetT2() int64 {
 func (m *TimeStamps) GetT3() int64 {
 	if m != nil && m.T3 != nil {
 		return *m.T3
+	}
+	return 0
+}
+
+func (m *TimeStamps) GetTOS() int32 {
+	if m != nil && m.TOS != nil {
+		return *m.TOS
 	}
 	return 0
 }

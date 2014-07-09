@@ -47,4 +47,5 @@ message TimeStamps{
     optional int64 T1 = 1; // local send
     optional int64 T2 = 2; // remote receive
     optional int64 T3 = 3; // remote send
+    optional int32 TOS = 5; // TOS bit of the msg
 }
