@@ -42,7 +42,7 @@ func WriteToTCP(sock *net.TCPConn, write_chan chan []byte,
 	fmt.Println("exiting write")
 }
 
-//not yet implemented
+//reconnecting to remote host for both read and write purpose
 func ReconnectTCPRW(ladr, radr net.TCPAddr, msg_buf []byte, write_chan chan []byte,
 	read_chan chan []byte, feedback_chan_w, feedback_chan_r chan int, init_msg []byte) {
 	loop := 1
@@ -65,4 +65,27 @@ func ReconnectTCPRW(ladr, radr net.TCPAddr, msg_buf []byte, write_chan chan []by
 		go WriteToTCP(sock, write_chan, feedback_chan_w)
 	}
 	fmt.Println("reconnected to remote host")
+}
+
+//reconnecting to remote host for write only
+func ReconnectTCPW(radr net.TCPAddr, write_chan chan []byte, feedback_chan chan int) {
+	loop := 1
+	for loop == 1 {
+		time.Sleep(time.Duration(20+rand.Intn(15)) * time.Second)
+		sock, err := net.DialTCP("tcp", nil, &radr)
+		if err != nil {
+			continue
+		}
+		//testing health of the new socket. GO sometimes doesnt rise the error when
+		// we receive RST from remote side
+		_, err = sock.Write([]byte{1})
+		if err != nil {
+			fmt.Println("dead socket")
+			sock.Close()
+			continue
+		}
+		loop = 0
+		go WriteToTCP(sock, write_chan, feedback_chan)
+	}
+	fmt.Println("reporter reconnected")
 }

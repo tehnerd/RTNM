@@ -22,6 +22,16 @@ type ReportStruct struct {
 	RemoteSite string
 }
 
+func GenerateMsg(key string, report ReportStruct, time string) []byte {
+	msg := strings.Join([]string{strings.Join([]string{key, "CS1"}, "."), strconv.FormatInt(report.CS1, 10), time, "\n",
+		strings.Join([]string{key, "CS2"}, "."), strconv.FormatInt(report.CS2, 10), time, "\n",
+		strings.Join([]string{key, "CS3"}, "."), strconv.FormatInt(report.CS3, 10), time, "\n",
+		strings.Join([]string{key, "CS4"}, "."), strconv.FormatInt(report.CS4, 10), time, "\n",
+		strings.Join([]string{key, "CS5"}, "."), strconv.FormatInt(report.CS5, 10), time, "\n",
+		strings.Join([]string{key, "CS6"}, "."), strconv.FormatInt(report.CS6, 10), time, "\n"}, " ")
+	return []byte(msg)
+}
+
 func CollectReportGraphite(report_chan chan []byte, cfg_dict cfg.CfgDict) {
 	write_chan := make(chan []byte)
 	feedback_chan := make(chan int)
@@ -50,11 +60,12 @@ func CollectReportGraphite(report_chan chan []byte, cfg_dict cfg.CfgDict) {
 		key := strings.Join([]string{report.LocalSite, report.RemoteSite}, "-")
 		key = strings.Join([]string{"stats.RTT", key}, ".")
 		time := strconv.FormatInt(time.Now().Unix(), 10)
-		write_chan <- []byte(strings.Join([]string{strings.Join([]string{key, "CS1"}, "."), strconv.FormatInt(report.CS1, 10), time, "\n"}, " "))
-		write_chan <- []byte(strings.Join([]string{strings.Join([]string{key, "CS2"}, "."), strconv.FormatInt(report.CS2, 10), time, "\n"}, " "))
-		write_chan <- []byte(strings.Join([]string{strings.Join([]string{key, "CS3"}, "."), strconv.FormatInt(report.CS3, 10), time, "\n"}, " "))
-		write_chan <- []byte(strings.Join([]string{strings.Join([]string{key, "CS4"}, "."), strconv.FormatInt(report.CS4, 10), time, "\n"}, " "))
-		write_chan <- []byte(strings.Join([]string{strings.Join([]string{key, "CS5"}, "."), strconv.FormatInt(report.CS5, 10), time, "\n"}, " "))
-		write_chan <- []byte(strings.Join([]string{strings.Join([]string{key, "CS6"}, "."), strconv.FormatInt(report.CS6, 10), time, "\n"}, " "))
+		select {
+		case <-feedback_chan:
+			feedback_chan <- 1
+			go netutils.ReconnectTCPW(reporterAddr, write_chan, feedback_chan)
+		default:
+			write_chan <- GenerateMsg(key, report, time)
+		}
 	}
 }

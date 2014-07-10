@@ -461,6 +461,9 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 			}
 		case <-feedback_chan_r:
 			feedback_chan_w <- 1
+			for key, _ := range Probes {
+				delete(Probes, key)
+			}
 			go netutils.ReconnectTCPRW(ladr, masterAddr, msg_buf, write_chan,
 				read_chan, feedback_chan_w, feedback_chan_r,
 				GenerateInitialHello(&cfg_dict))
