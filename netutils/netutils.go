@@ -2,7 +2,9 @@ package netutils
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
+	"time"
 )
 
 //Receive msg from tcp socket and send it as a []byte to read_chan
@@ -38,4 +40,28 @@ func WriteToTCP(sock *net.TCPConn, write_chan chan []byte,
 		}
 	}
 	fmt.Println("exiting write")
+}
+
+//not yet implemented
+func ReconnectTCPRW(ladr, radr net.TCPAddr, msg_buf []byte, write_chan chan []byte,
+	read_chan chan []byte, feedback_chan_w, feedback_chan_r chan int, init_msg []byte) {
+	loop := 1
+	for loop == 1 {
+		time.Sleep(time.Duration(20+rand.Intn(15)) * time.Second)
+		sock, err := net.DialTCP("tcp", &ladr, &radr)
+		if err != nil {
+			continue
+		}
+		//testing health of the new socket. GO sometimes doesnt rise the error when
+		// we receive RST from remote side
+		_, err = sock.Write(init_msg)
+		if err != nil {
+			fmt.Println("dead socket")
+			continue
+		}
+		loop = 0
+		go ReadFromTCP(sock, msg_buf, read_chan, feedback_chan_r)
+		go WriteToTCP(sock, write_chan, feedback_chan_w)
+	}
+	fmt.Println("reconnected to remote host")
 }

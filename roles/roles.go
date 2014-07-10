@@ -7,11 +7,11 @@ import (
 	"net"
 	"os"
 	"rtnm/cfg"
+	"rtnm/netutils"
 	"rtnm/reporter"
 	"rtnm/rtnm_pb"
 	"rtnm/rtnm_pubsub"
 	"rtnm/timestamps"
-    "rtnm/netutils"
 	"strconv"
 	"strings"
 	"sync"
@@ -150,7 +150,6 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 	broker_unsub_chan chan rtnm_pubsub.PubSubMeta,
 	broker_pub_chan chan rtnm_pubsub.ProbeInfo,
 	external_report_chan chan []byte) {
-	sock.SetNoDelay(true)
 	msg_buf := make([]byte, 9000)
 	defer sock.Close()
 	probe_descr, err := ProbeInitialRegister(sock, msg_buf, cfg_dict, Probes, mutex)
@@ -222,9 +221,7 @@ type ProbeContext struct {
 
 func (PC *ProbeContext) setKA(keepalive uint32) { PC.KA_interval = keepalive }
 
-//Inital hello/registration msg to Master, sends Probe location etc
-func ProbeInitialHello(sock *net.TCPConn, context *ProbeContext,
-	cfg_dict *cfg.CfgDict, msg_buf []byte) {
+func GenerateInitialHello(cfg_dict *cfg.CfgDict) []byte {
 	init_hello := &rtnm_pb.MSGS{
 		PReg: &rtnm_pb.ProbeRegister{
 			ProbeIp:       proto.String(cfg_dict.Bind_IP.String()),
@@ -232,20 +229,7 @@ func ProbeInitialHello(sock *net.TCPConn, context *ProbeContext,
 		},
 	}
 	data, _ := proto.Marshal(init_hello)
-	sock.Write(data)
-	bytes, err := sock.Read(msg_buf)
-	if err != nil {
-		return
-	}
-	msg := &rtnm_pb.MSGS{}
-	err = proto.Unmarshal(msg_buf[:bytes], msg)
-	if err != nil {
-		fmt.Println("error during unmarshal")
-		return
-	}
-	if msg.GetRConf() != nil {
-		context.setKA(msg.GetRConf().GetProbeKA())
-	}
+	return data
 }
 
 func GenerateUDPMessage(udpaddr *net.UDPAddr, msg []byte, tos int32) UDPMessage {
@@ -366,25 +350,29 @@ func GenerateReport(report *TestsReport, cfg_dict *cfg.CfgDict) []byte {
 //TODO: feedback chan. right now could hang forever in case
 //of dead master
 func send_keepalive(keepalive []byte, write_chan chan []byte,
-	ka_interval uint32) {
+	keepalive_chan chan int) {
 	loop := 1
+	KA := 300
 	for loop == 1 {
-		time.Sleep(time.Duration(ka_interval) * time.Second)
-		write_chan <- keepalive
+		select {
+		case <-time.After(time.Duration(KA) * time.Second):
+			write_chan <- keepalive
+		case KA = <-keepalive_chan:
+		}
 	}
 }
 
 //Main probe's logic's implementation
 func StartProbe(cfg_dict cfg.CfgDict) {
-	var lladr, masterAddr net.TCPAddr
+	var ladr, masterAddr net.TCPAddr
 	msg_buf := make([]byte, 9000)
 	udp_msg_buf := make([]byte, 9000)
 	var probe_context ProbeContext
 	Probes := make(map[string]ProbeDescrProbe)
 	masterAddr.IP = cfg_dict.Master
 	masterAddr.Port = cfg_dict.Port
-	lladr.IP = cfg_dict.Bind_IP
-	master_conn, _ := net.DialTCP("tcp", &lladr, &masterAddr)
+	ladr.IP = cfg_dict.Bind_IP
+	master_conn, _ := net.DialTCP("tcp", &ladr, &masterAddr)
 	udp_lladr := strings.Join([]string{cfg_dict.Bind_IP.String(),
 		strconv.Itoa(cfg_dict.Port)}, ":")
 	udpaddr, err := net.ResolveUDPAddr("udp", udp_lladr)
@@ -397,7 +385,6 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	}
 	defer master_conn.Close()
 	defer udpconn.Close()
-	ProbeInitialHello(master_conn, &probe_context, &cfg_dict, msg_buf)
 	write_chan := make(chan []byte)
 	read_chan := make(chan []byte)
 	udp_write_chan := make(chan UDPMessage)
@@ -407,6 +394,7 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	report_chan := make(chan TestsReport)
 	feedback_chan_r := make(chan int)
 	feedback_chan_w := make(chan int)
+	keepalive_chan := make(chan int)
 	var mutex sync.RWMutex
 	go netutils.ReadFromTCP(master_conn, msg_buf, read_chan, feedback_chan_r)
 	go netutils.WriteToTCP(master_conn, write_chan, feedback_chan_w)
@@ -419,8 +407,9 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	}
 	rand.Seed(time.Now().Unix())
 	hello_data, _ := proto.Marshal(hello_msg)
+	write_chan <- GenerateInitialHello(&cfg_dict)
 	write_chan <- hello_data
-	go send_keepalive(hello_data, write_chan, probe_context.KA_interval)
+	go send_keepalive(hello_data, write_chan, keepalive_chan)
 	loop := 1
 	test_running := 0
 	go PeriodicTests(Probes, udp_write_chan, latency_test_chan, &cfg_dict,
@@ -446,6 +435,10 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 					mutex.Unlock()
 				}
 			}
+			if msg.GetRConf() != nil {
+				probe_context.setKA(msg.GetRConf().GetProbeKA())
+				keepalive_chan <- int(probe_context.KA_interval)
+			}
 			if msg.GetRProbe() != nil {
 				//TODO: add logic in case of two masters
 				mutex.Lock()
@@ -469,7 +462,9 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 			}
 		case <-feedback_chan_r:
 			feedback_chan_w <- 1
-			loop = 0
+			go netutils.ReconnectTCPRW(ladr, masterAddr, msg_buf, write_chan,
+				read_chan, feedback_chan_w, feedback_chan_r,
+				GenerateInitialHello(&cfg_dict))
 		case report := <-report_chan:
 			data := GenerateReport(&report, &cfg_dict)
 			write_chan <- data

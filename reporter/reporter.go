@@ -2,14 +2,13 @@ package reporter
 
 import (
 	"code.google.com/p/goprotobuf/proto"
-	"fmt"
 	"net"
 	"rtnm/cfg"
+	"rtnm/netutils"
 	"rtnm/rtnm_pb"
 	"strconv"
 	"strings"
 	"time"
-    "rtnm/netutils"
 )
 
 type ReportStruct struct {
