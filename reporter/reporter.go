@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+    "rtnm/netutils"
 )
 
 type ReportStruct struct {
@@ -22,24 +23,6 @@ type ReportStruct struct {
 	RemoteSite string
 }
 
-func WriteToTCP(sock *net.TCPConn, write_chan chan []byte,
-	feedback_chan chan int) {
-	loop := 1
-	for loop == 1 {
-		select {
-		case msg := <-write_chan:
-			_, err := sock.Write(msg)
-			if err != nil {
-				feedback_chan <- 1
-				continue
-			}
-		case <-feedback_chan:
-			loop = 0
-		}
-	}
-	fmt.Println("exiting write")
-}
-
 func CollectReportGraphite(report_chan chan []byte, cfg_dict cfg.CfgDict) {
 	write_chan := make(chan []byte)
 	feedback_chan := make(chan int)
@@ -51,7 +34,7 @@ func CollectReportGraphite(report_chan chan []byte, cfg_dict cfg.CfgDict) {
 	if err != nil {
 		panic("cant connect to graphite server")
 	}
-	go WriteToTCP(sock, write_chan, feedback_chan)
+	go netutils.WriteToTCP(sock, write_chan, feedback_chan)
 	for {
 		msg := <-report_chan
 		report_msg := &rtnm_pb.MSGS{}

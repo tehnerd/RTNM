@@ -11,6 +11,7 @@ import (
 	"rtnm/rtnm_pb"
 	"rtnm/rtnm_pubsub"
 	"rtnm/timestamps"
+    "rtnm/netutils"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,41 +68,6 @@ func WriteToUDP(udpconn *net.UDPConn, cfg_dict cfg.CfgDict,
 		fd.Close()
 		udpconn.WriteToUDP(msg.Message, &msg.UDPAddr)
 	}
-}
-
-//Receive msg from tcp socket and send it as a []byte to read_chan
-func ReadFromTCP(sock *net.TCPConn, msg_buf []byte, read_chan chan []byte,
-	feedback_chan chan int) {
-	loop := 1
-	for loop == 1 {
-		bytes, err := sock.Read(msg_buf)
-		if err != nil {
-			feedback_chan <- 1
-			loop = 0
-			continue
-		}
-		read_chan <- msg_buf[:bytes]
-	}
-	fmt.Println("exiting read")
-}
-
-//Receive msg from write_chan and send it to tcp socket
-func WriteToTCP(sock *net.TCPConn, write_chan chan []byte,
-	feedback_chan chan int) {
-	loop := 1
-	for loop == 1 {
-		select {
-		case msg := <-write_chan:
-			_, err := sock.Write(msg)
-			if err != nil {
-				feedback_chan <- 1
-				continue
-			}
-		case <-feedback_chan:
-			loop = 0
-		}
-	}
-	fmt.Println("exiting write")
 }
 
 //Receive initial info from probe, like: location, address etc
@@ -200,8 +166,8 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 	read_chan := make(chan []byte)
 	feedback_chan_r := make(chan int)
 	feedback_chan_w := make(chan int)
-	go ReadFromTCP(sock, msg_buf, read_chan, feedback_chan_r)
-	go WriteToTCP(sock, write_chan, feedback_chan_w)
+	go netutils.ReadFromTCP(sock, msg_buf, read_chan, feedback_chan_r)
+	go netutils.WriteToTCP(sock, write_chan, feedback_chan_w)
 	ProbeInitialSync(write_chan, Probes, &probe_descr, mutex)
 	loop := 1
 	for loop == 1 {
@@ -442,8 +408,8 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	feedback_chan_r := make(chan int)
 	feedback_chan_w := make(chan int)
 	var mutex sync.RWMutex
-	go ReadFromTCP(master_conn, msg_buf, read_chan, feedback_chan_r)
-	go WriteToTCP(master_conn, write_chan, feedback_chan_w)
+	go netutils.ReadFromTCP(master_conn, msg_buf, read_chan, feedback_chan_r)
+	go netutils.WriteToTCP(master_conn, write_chan, feedback_chan_w)
 	go ReadFromUDP(udpconn, cfg_dict, udp_msg_buf, udp_read_chan)
 	go WriteToUDP(udpconn, cfg_dict, udp_write_chan)
 	hello_msg := &rtnm_pb.MSGS{
