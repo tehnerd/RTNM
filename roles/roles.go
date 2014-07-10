@@ -7,10 +7,10 @@ import (
 	"net"
 	"os"
 	"rtnm/cfg"
+	"rtnm/reporter"
 	"rtnm/rtnm_pb"
 	"rtnm/rtnm_pubsub"
 	"rtnm/timestamps"
-    "rtnm/reporter"
 	"strconv"
 	"strings"
 	"sync"
@@ -149,7 +149,6 @@ func ProbeInitialSync(write_chan chan []byte, Probes map[string]ProbeDescrMaster
 	defer mutex.RUnlock()
 	for ProbeID, ProbeDescr := range Probes {
 		if ProbeID != (*LocalProbe).IP.String() {
-			fmt.Println(ProbeDescr)
 			msg_pb := &rtnm_pb.MSGS{
 				AProbe: &rtnm_pb.AddProbe{
 					ProbeIp:       proto.String(ProbeDescr.IP.String()),
@@ -184,12 +183,11 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 	broker_sub_chan chan rtnm_pubsub.PubSubMeta,
 	broker_unsub_chan chan rtnm_pubsub.PubSubMeta,
 	broker_pub_chan chan rtnm_pubsub.ProbeInfo,
-    external_report_chan chan []byte) {
+	external_report_chan chan []byte) {
 	sock.SetNoDelay(true)
 	msg_buf := make([]byte, 9000)
 	defer sock.Close()
 	probe_descr, err := ProbeInitialRegister(sock, msg_buf, cfg_dict, Probes, mutex)
-	fmt.Println(Probes)
 	if err != nil {
 		return
 	}
@@ -222,11 +220,10 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 				panic("error during unmarshaling protobuf")
 			}
 			if msg.GetHello() != nil {
-				fmt.Println(msg)
 				continue
 			}
 			if msg.GetRep() != nil {
-                external_report_chan <- msg_from_probe
+				external_report_chan <- msg_from_probe
 			}
 		case probe_info := <-sub_chan.Chan:
 			if probe_info.Action == "Add" {
@@ -471,7 +468,6 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 				fmt.Println("error during unmarshal")
 				return
 			}
-			fmt.Println(msg)
 			if msg.GetAProbe() != nil {
 				NewProbe := ProbeDescrProbe{net.ParseIP(msg.GetAProbe().GetProbeIp()),
 					msg.GetAProbe().GetProbeLocation()}
@@ -526,9 +522,9 @@ func StartMaster(cfg_dict cfg.CfgDict) {
 	sub_chan := make(chan rtnm_pubsub.PubSubMeta)
 	unsub_chan := make(chan rtnm_pubsub.PubSubMeta)
 	pub_chan := make(chan rtnm_pubsub.ProbeInfo)
-    external_report_chan := make(chan []byte, 100)
+	external_report_chan := make(chan []byte, 100)
 	go rtnm_pubsub.StartBroker(sub_chan, unsub_chan, pub_chan)
-    go reporter.CollectReportGraphite(external_report_chan, cfg_dict)
+	go reporter.CollectReportGraphite(external_report_chan, cfg_dict)
 	master_socket, err := net.ListenTCP("tcp", &tcpAddr)
 	if err != nil {
 		fmt.Println("cant open tcp socket")

@@ -14,7 +14,7 @@ type CfgDict struct {
 	Port        int
 	Peer        net.IP
 	Location    string
-    Reporter    string
+	Reporter    string
 	Bind_IP     net.IP
 	KA_interval uint32
 	Tests       []string
@@ -56,8 +56,8 @@ func ReadConfig() CfgDict {
 				cfg_dict.Master = net.ParseIP(fields[1])
 			case "peer:":
 				cfg_dict.Peer = net.ParseIP(fields[1])
-            case "reporter:":
-                cfg_dict.Reporter = fields[1]
+			case "reporter:":
+				cfg_dict.Reporter = fields[1]
 			default:
 			}
 		}
