@@ -260,7 +260,6 @@ func PeriodicTests(Probes map[string]ProbeDescrProbe, udp_write_chan chan UDPMes
 			cntr := 0
 			for _, value := range Probes {
 				if int32(cntr) == probe_n {
-					mutex.RUnlock()
 					*flag = 1
 					LatencyTest(value, cfg_dict, udp_write_chan,
 						latency_test_chan, flag, report_chan)

@@ -57,6 +57,7 @@ func ReconnectTCPRW(ladr, radr net.TCPAddr, msg_buf []byte, write_chan chan []by
 		_, err = sock.Write(init_msg)
 		if err != nil {
 			fmt.Println("dead socket")
+			sock.Close()
 			continue
 		}
 		loop = 0
