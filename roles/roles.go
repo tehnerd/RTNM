@@ -203,7 +203,8 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 			} else {
 				msg_pb := &rtnm_pb.MSGS{
 					RProbe: &rtnm_pb.RemoveProbe{
-						ProbeIp: proto.String(probe_info.IP.String()),
+						ProbeIp:       proto.String(probe_info.IP.String()),
+						ProbeLocation: proto.String(probe_info.Location),
 					},
 				}
 				msg, _ := proto.Marshal(msg_pb)
@@ -247,26 +248,50 @@ func LatencyTestReply(msg UDPMessage, udp_write_chan chan UDPMessage) {
 	udp_write_chan <- GenerateUDPMessage(&msg.UDPAddr, reply_data, timestamp.TOS)
 }
 
-func PeriodicTests(Probes map[string]ProbeDescrProbe, udp_write_chan chan UDPMessage,
+func PeriodicTests(SiteProbes map[string]map[string]ProbeDescrProbe,
+	SiteMap map[string]int, udp_write_chan chan UDPMessage,
 	latency_test_chan chan UDPMessage, cfg_dict *cfg.CfgDict,
 	flag *int, mutex *sync.RWMutex, report_chan chan TestsReport) {
 	//TODO: add feedback chan
 	for {
+		if len(SiteMap) == 0 && len(SiteProbes) != 0 {
+			mutex.Lock()
+			for key, _ := range SiteProbes {
+				SiteMap[key] = 1
+			}
+			mutex.Unlock()
+		}
 		time.Sleep(time.Duration(rand.Int31n(15)+10) * time.Second)
-		if len(Probes) != 0 {
-			//TODO: more sophisticated way to select remote probes
-			//this one is for tests only
-			probe_n := rand.Int31n(int32(len(Probes)))
+		mutex.RLock()
+		if len(SiteMap) == 0 {
+			mutex.RUnlock()
+			continue
+		}
+		var Site string
+		for Site, _ = range SiteMap {
+			break
+		}
+		lock_flag := 1
+		if len(SiteProbes[Site]) != 0 {
+			probe_n := rand.Int31n(int32(len(SiteProbes[Site])))
 			cntr := 0
-			for _, value := range Probes {
+			for _, value := range SiteProbes[Site] {
 				if int32(cntr) == probe_n {
 					*flag = 1
+					lock_flag = 0
+					mutex.RUnlock()
+					mutex.Lock()
+					delete(SiteMap, Site)
+					mutex.Unlock()
 					LatencyTest(value, cfg_dict, udp_write_chan,
 						latency_test_chan, flag, report_chan)
 					break
 				}
 				cntr++
 			}
+		}
+		if lock_flag == 1 {
+			mutex.RUnlock()
 		}
 	}
 }
@@ -367,7 +392,8 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	msg_buf := make([]byte, 9000)
 	udp_msg_buf := make([]byte, 9000)
 	var probe_context ProbeContext
-	Probes := make(map[string]ProbeDescrProbe)
+	SiteProbes := make(map[string]map[string]ProbeDescrProbe)
+	SiteMap := make(map[string]int)
 	masterAddr.IP = cfg_dict.Master
 	masterAddr.Port = cfg_dict.Port
 	ladr.IP = cfg_dict.Bind_IP
@@ -411,8 +437,8 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	go send_keepalive(hello_data, write_chan, keepalive_chan)
 	loop := 1
 	test_running := 0
-	go PeriodicTests(Probes, udp_write_chan, latency_test_chan, &cfg_dict,
-		&test_running, &mutex, report_chan)
+	go PeriodicTests(SiteProbes, SiteMap, udp_write_chan, latency_test_chan,
+		&cfg_dict, &test_running, &mutex, report_chan)
 	for loop == 1 {
 		select {
 		case msg_from_master := <-read_chan:
@@ -426,12 +452,23 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 				NewProbe := ProbeDescrProbe{net.ParseIP(msg.GetAProbe().GetProbeIp()),
 					msg.GetAProbe().GetProbeLocation()}
 				mutex.RLock()
-				_, exist := Probes[NewProbe.IP.String()]
+				_, site_exist := SiteProbes[NewProbe.Location]
 				mutex.RUnlock()
-				if !exist {
+				if !site_exist {
 					mutex.Lock()
-					Probes[NewProbe.IP.String()] = NewProbe
+					SiteProbes[NewProbe.Location] = make(map[string]ProbeDescrProbe)
+					SiteProbes[NewProbe.Location][NewProbe.IP.String()] = NewProbe
+					SiteMap[NewProbe.Location] = 0
 					mutex.Unlock()
+				} else {
+					mutex.RLock()
+					_, probe_exist := SiteProbes[NewProbe.Location][NewProbe.IP.String()]
+					mutex.RUnlock()
+					if !probe_exist {
+						mutex.Lock()
+						SiteProbes[NewProbe.Location][NewProbe.IP.String()] = NewProbe
+						mutex.Unlock()
+					}
 				}
 			}
 			if msg.GetRConf() != nil {
@@ -440,8 +477,14 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 			}
 			if msg.GetRProbe() != nil {
 				//TODO: add logic in case of two masters
+				RProbe_IP := msg.GetRProbe().GetProbeIp()
+				RProbe_Location := msg.GetRProbe().GetProbeLocation()
 				mutex.Lock()
-				delete(Probes, msg.GetRProbe().GetProbeIp())
+				delete(SiteProbes[RProbe_Location], RProbe_IP)
+				if len(SiteProbes[RProbe_Location]) == 0 {
+					delete(SiteProbes, RProbe_Location)
+					delete(SiteMap, RProbe_Location)
+				}
 				mutex.Unlock()
 			}
 		case msg_from_probe := <-udp_read_chan:
@@ -461,8 +504,12 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 			}
 		case <-feedback_chan_r:
 			feedback_chan_w <- 1
-			for key, _ := range Probes {
-				delete(Probes, key)
+			mutex.Lock()
+			for key, _ := range SiteProbes {
+				delete(SiteProbes, key)
+			}
+			for key, _ := range SiteMap {
+				delete(SiteMap, key)
 			}
 			go netutils.ReconnectTCPRW(ladr, masterAddr, msg_buf, write_chan,
 				read_chan, feedback_chan_w, feedback_chan_r,

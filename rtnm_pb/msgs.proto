@@ -40,6 +40,7 @@ message AddProbe{
 some probe timed out */
 message RemoveProbe{
     optional string ProbeIp = 1;
+    optional string ProbeLocation = 2;
 }
 
 /* msg from probe to probe. we are using it to calculate timeskew

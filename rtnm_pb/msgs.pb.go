@@ -190,6 +190,7 @@ func (m *AddProbe) GetProbeLocation() string {
 // some probe timed out
 type RemoveProbe struct {
 	ProbeIp          *string `protobuf:"bytes,1,opt" json:"ProbeIp,omitempty"`
+	ProbeLocation    *string `protobuf:"bytes,2,opt" json:"ProbeLocation,omitempty"`
 	XXX_unrecognized []byte  `json:"-"`
 }
 
@@ -200,6 +201,13 @@ func (*RemoveProbe) ProtoMessage()    {}
 func (m *RemoveProbe) GetProbeIp() string {
 	if m != nil && m.ProbeIp != nil {
 		return *m.ProbeIp
+	}
+	return ""
+}
+
+func (m *RemoveProbe) GetProbeLocation() string {
+	if m != nil && m.ProbeLocation != nil {
+		return *m.ProbeLocation
 	}
 	return ""
 }
