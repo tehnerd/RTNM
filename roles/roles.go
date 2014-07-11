@@ -223,10 +223,9 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 					panic("error during unmarshaling protobuf")
 				}
 				if msg.GetHello() != nil {
-					continue
 				}
 				if msg.GetRep() != nil {
-					external_report_chan <- msg_from_probe
+					external_report_chan <- tcp_msg[4:TLV.TLV_length]
 				}
 				tcp_msg = tcp_msg[TLV.TLV_length:]
 			}
@@ -239,6 +238,7 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 					},
 				}
 				msg, _ := proto.Marshal(msg_pb)
+				msg = tlvs.GeneratePBTLV(msg)
 				write_chan <- msg
 			} else {
 				msg_pb := &rtnm_pb.MSGS{
@@ -248,6 +248,7 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 					},
 				}
 				msg, _ := proto.Marshal(msg_pb)
+				msg = tlvs.GeneratePBTLV(msg)
 				write_chan <- msg
 			}
 
