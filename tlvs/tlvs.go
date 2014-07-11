@@ -29,3 +29,12 @@ func (tlv *TLVHeader)Decode(buffer []byte){
         fmt.Println(err)
     }
 }
+
+//generate pb encapsulated in TLV(1,1)
+func GeneratePBTLV(data []byte) []byte{
+    tlv_header := TLVHeader{1,1,0}
+    tlv_header.TLV_length = uint16(len(data)+4)
+    msg := append(tlv_header.Encode(),data...)
+    return msg
+}
+

@@ -12,6 +12,7 @@ import (
 	"rtnm/rtnm_pb"
 	"rtnm/rtnm_pubsub"
 	"rtnm/timestamps"
+	"rtnm/tlvs"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,19 +82,36 @@ func ProbeInitialRegister(sock *net.TCPConn, msg_buf []byte,
 		return ProbeDescr, err
 	}
 	msg := &rtnm_pb.MSGS{}
-	err = proto.Unmarshal(msg_buf[:bytes], msg)
-	if err != nil {
-		fmt.Println("error during unmarshal")
-		return ProbeDescr, err
+	//fastfix. will redo latter
+	if len(msg_buf) < 4 {
+		panic("not TLVed msg")
 	}
-	if msg.GetPReg() != nil {
-		mutex.Lock()
-		//TODO: checks for err, coz we could deadlock ourself
-		ProbeDescr.IP = net.ParseIP(msg.GetPReg().GetProbeIp())
-		ProbeDescr.Location = msg.GetPReg().GetProbeLocation()
-		ProbeDescr.Preference = 150
-		Probes[msg.GetPReg().GetProbeIp()] = ProbeDescr
-		mutex.Unlock()
+	tcp_msg := msg_buf[:bytes]
+	for {
+		if len(tcp_msg) < 4 {
+			break
+		}
+		var TLV tlvs.TLVHeader
+		TLV.Decode(tcp_msg[0:4])
+		if len(tcp_msg) < int(TLV.TLV_length) ||
+			(TLV.TLV_type != 1 && TLV.TLV_subtype != 1) {
+			panic("initial msg tlv len error")
+		}
+		err = proto.Unmarshal(tcp_msg[4:TLV.TLV_length], msg)
+		if err != nil {
+			fmt.Println("error during initial unmarshal")
+			return ProbeDescr, err
+		}
+		if msg.GetPReg() != nil {
+			mutex.Lock()
+			//TODO: checks for err, coz we could deadlock ourself
+			ProbeDescr.IP = net.ParseIP(msg.GetPReg().GetProbeIp())
+			ProbeDescr.Location = msg.GetPReg().GetProbeLocation()
+			ProbeDescr.Preference = 150
+			Probes[msg.GetPReg().GetProbeIp()] = ProbeDescr
+			mutex.Unlock()
+		}
+		tcp_msg = tcp_msg[TLV.TLV_length:]
 	}
 	reg_confirm := &rtnm_pb.MSGS{
 		RConf: &rtnm_pb.MasterRegConfirm{
@@ -102,9 +120,8 @@ func ProbeInitialRegister(sock *net.TCPConn, msg_buf []byte,
 		},
 	}
 	data, _ := proto.Marshal(reg_confirm)
+	data = tlvs.GeneratePBTLV(data)
 	sock.Write(data)
-	//hack to handle tcp offloading
-	sock.Read(msg_buf)
 	return ProbeDescr, nil
 }
 
@@ -122,6 +139,7 @@ func ProbeInitialSync(write_chan chan []byte, Probes map[string]ProbeDescrMaster
 				},
 			}
 			msg, _ := proto.Marshal(msg_pb)
+			msg = tlvs.GeneratePBTLV(msg)
 			write_chan <- msg
 		}
 	}
@@ -151,6 +169,7 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 	broker_pub_chan chan rtnm_pubsub.ProbeInfo,
 	external_report_chan chan []byte) {
 	msg_buf := make([]byte, 9000)
+	tcp_msg := make([]byte, 0)
 	defer sock.Close()
 	probe_descr, err := ProbeInitialRegister(sock, msg_buf, cfg_dict, Probes, mutex)
 	if err != nil {
@@ -179,16 +198,37 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 				mutex, Probes, &loop, feedback_chan_w)
 			fmt.Println("probe timed out")
 		case msg_from_probe := <-read_chan:
-			msg := &rtnm_pb.MSGS{}
-			err := proto.Unmarshal(msg_from_probe, msg)
-			if err != nil {
-				panic("error during unmarshaling protobuf")
-			}
-			if msg.GetHello() != nil {
+			tcp_msg = append(tcp_msg, msg_from_probe...)
+			if len(tcp_msg) < 4 {
 				continue
 			}
-			if msg.GetRep() != nil {
-				external_report_chan <- msg_from_probe
+			for {
+				if len(tcp_msg) < 4 {
+					break
+				}
+				var TLV tlvs.TLVHeader
+				TLV.Decode(tcp_msg[0:4])
+				if len(tcp_msg) < int(TLV.TLV_length) {
+					break
+				}
+				if TLV.TLV_type != 1 && TLV.TLV_subtype != 1 { //1.1 -> protobuf.MSGS
+					tcp_msg = tcp_msg[TLV.TLV_length:]
+					fmt.Println("unknown tlv")
+					continue
+				}
+
+				msg := &rtnm_pb.MSGS{}
+				err := proto.Unmarshal(tcp_msg[4:TLV.TLV_length], msg)
+				if err != nil {
+					panic("error during unmarshaling protobuf")
+				}
+				if msg.GetHello() != nil {
+					continue
+				}
+				if msg.GetRep() != nil {
+					external_report_chan <- msg_from_probe
+				}
+				tcp_msg = tcp_msg[TLV.TLV_length:]
 			}
 		case probe_info := <-sub_chan.Chan:
 			if probe_info.Action == "Add" {
@@ -230,6 +270,7 @@ func GenerateInitialHello(cfg_dict *cfg.CfgDict) []byte {
 		},
 	}
 	data, _ := proto.Marshal(init_hello)
+	data = tlvs.GeneratePBTLV(data)
 	return data
 }
 
@@ -368,6 +409,7 @@ func GenerateReport(report *TestsReport, cfg_dict *cfg.CfgDict) []byte {
 	if err != nil {
 		panic("we cant generate report")
 	}
+	data = tlvs.GeneratePBTLV(data)
 	return data
 }
 
@@ -416,6 +458,7 @@ func DebugOutputProbe(SiteProbes map[string]map[string]ProbeDescrProbe,
 func StartProbe(cfg_dict cfg.CfgDict) {
 	var ladr, masterAddr net.TCPAddr
 	msg_buf := make([]byte, 9000)
+	tcp_msg := make([]byte, 0)
 	udp_msg_buf := make([]byte, 9000)
 	var probe_context ProbeContext
 	SiteProbes := make(map[string]map[string]ProbeDescrProbe)
@@ -461,6 +504,7 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	}
 	rand.Seed(time.Now().Unix())
 	hello_data, _ := proto.Marshal(hello_msg)
+	hello_data = tlvs.GeneratePBTLV(hello_data)
 	write_chan <- GenerateInitialHello(&cfg_dict)
 	write_chan <- hello_data
 	go send_keepalive(hello_data, write_chan, keepalive_chan)
@@ -471,50 +515,69 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	for loop == 1 {
 		select {
 		case msg_from_master := <-read_chan:
-			msg := &rtnm_pb.MSGS{}
-			err := proto.Unmarshal(msg_from_master, msg)
-			if err != nil {
-				fmt.Println("error during unmarshal")
-				return
+			tcp_msg = append(tcp_msg, msg_from_master...)
+			if len(tcp_msg) < 4 {
+				continue
 			}
-			if msg.GetAProbe() != nil {
-				NewProbe := ProbeDescrProbe{net.ParseIP(msg.GetAProbe().GetProbeIp()),
-					msg.GetAProbe().GetProbeLocation()}
-				mutex.RLock()
-				_, site_exist := SiteProbes[NewProbe.Location]
-				mutex.RUnlock()
-				if !site_exist {
-					mutex.Lock()
-					SiteProbes[NewProbe.Location] = make(map[string]ProbeDescrProbe)
-					SiteProbes[NewProbe.Location][NewProbe.IP.String()] = NewProbe
-					SiteMap[NewProbe.Location] = 0
-					mutex.Unlock()
-				} else {
+			for {
+				if len(tcp_msg) < 4 {
+					break
+				}
+				var TLV tlvs.TLVHeader
+				TLV.Decode(tcp_msg[0:4])
+				if len(tcp_msg) < int(TLV.TLV_length) {
+					break
+				}
+				if TLV.TLV_type != 1 && TLV.TLV_subtype != 1 { //1.1 -> protobuf.MSGS
+					tcp_msg = tcp_msg[TLV.TLV_length:]
+					continue
+				}
+				msg := &rtnm_pb.MSGS{}
+				err := proto.Unmarshal(tcp_msg[4:TLV.TLV_length], msg)
+				if err != nil {
+					fmt.Println(err)
+					panic("pb unmarshling failed")
+				}
+				if msg.GetAProbe() != nil {
+					NewProbe := ProbeDescrProbe{net.ParseIP(msg.GetAProbe().GetProbeIp()),
+						msg.GetAProbe().GetProbeLocation()}
 					mutex.RLock()
-					_, probe_exist := SiteProbes[NewProbe.Location][NewProbe.IP.String()]
+					_, site_exist := SiteProbes[NewProbe.Location]
 					mutex.RUnlock()
-					if !probe_exist {
+					if !site_exist {
 						mutex.Lock()
+						SiteProbes[NewProbe.Location] = make(map[string]ProbeDescrProbe)
 						SiteProbes[NewProbe.Location][NewProbe.IP.String()] = NewProbe
+						SiteMap[NewProbe.Location] = 0
 						mutex.Unlock()
+					} else {
+						mutex.RLock()
+						_, probe_exist := SiteProbes[NewProbe.Location][NewProbe.IP.String()]
+						mutex.RUnlock()
+						if !probe_exist {
+							mutex.Lock()
+							SiteProbes[NewProbe.Location][NewProbe.IP.String()] = NewProbe
+							mutex.Unlock()
+						}
 					}
 				}
-			}
-			if msg.GetRConf() != nil {
-				probe_context.setKA(msg.GetRConf().GetProbeKA())
-				keepalive_chan <- int(probe_context.KA_interval)
-			}
-			if msg.GetRProbe() != nil {
-				//TODO: add logic in case of two masters
-				RProbe_IP := msg.GetRProbe().GetProbeIp()
-				RProbe_Location := msg.GetRProbe().GetProbeLocation()
-				mutex.Lock()
-				delete(SiteProbes[RProbe_Location], RProbe_IP)
-				if len(SiteProbes[RProbe_Location]) == 0 {
-					delete(SiteProbes, RProbe_Location)
-					delete(SiteMap, RProbe_Location)
+				if msg.GetRConf() != nil {
+					probe_context.setKA(msg.GetRConf().GetProbeKA())
+					keepalive_chan <- int(probe_context.KA_interval)
 				}
-				mutex.Unlock()
+				if msg.GetRProbe() != nil {
+					//TODO: add logic in case of two masters
+					RProbe_IP := msg.GetRProbe().GetProbeIp()
+					RProbe_Location := msg.GetRProbe().GetProbeLocation()
+					mutex.Lock()
+					delete(SiteProbes[RProbe_Location], RProbe_IP)
+					if len(SiteProbes[RProbe_Location]) == 0 {
+						delete(SiteProbes, RProbe_Location)
+						delete(SiteMap, RProbe_Location)
+					}
+					mutex.Unlock()
+				}
+				tcp_msg = tcp_msg[TLV.TLV_length:]
 			}
 		case msg_from_probe := <-udp_read_chan:
 			msg := &rtnm_pb.MSGS{}
