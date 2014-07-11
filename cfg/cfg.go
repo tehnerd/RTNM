@@ -9,15 +9,17 @@ import (
 )
 
 type CfgDict struct {
-	CnC         bool
-	Master      net.IP
-	Port        int
-	Peer        net.IP
-	Location    string
-	Reporter    string
-	Bind_IP     net.IP
-	KA_interval uint32
-	Tests       []string
+	CnC            bool
+	Master         net.IP
+	Port           int
+	Peer           net.IP
+	Location       string
+	Reporter       string
+	Bind_IP        net.IP
+	KA_interval    uint32
+	Tests          []string
+	DebugPort      int
+	DebugPortProbe int
 }
 
 func ReadConfig() CfgDict {
@@ -58,6 +60,13 @@ func ReadConfig() CfgDict {
 				cfg_dict.Peer = net.ParseIP(fields[1])
 			case "reporter:":
 				cfg_dict.Reporter = fields[1]
+			case "debug_port:":
+				port, _ := strconv.Atoi(fields[1])
+				cfg_dict.DebugPort = port
+			case "debug_port_probe:":
+				port, _ := strconv.Atoi(fields[1])
+				cfg_dict.DebugPortProbe = port
+
 			default:
 			}
 		}

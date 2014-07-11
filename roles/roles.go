@@ -386,6 +386,32 @@ func send_keepalive(keepalive []byte, write_chan chan []byte,
 	}
 }
 
+func DebugOutputProbe(SiteProbes map[string]map[string]ProbeDescrProbe,
+	mutex *sync.RWMutex, cfg_dict cfg.CfgDict) {
+	var debugAddr net.TCPAddr
+	debugAddr.IP = net.ParseIP("127.0.0.1")
+	debugAddr.Port = cfg_dict.DebugPortProbe
+	debug_socket, err := net.ListenTCP("tcp", &debugAddr)
+	if err != nil {
+		panic("cant bind to debug socket")
+	}
+	for {
+		debug_conn, _ := debug_socket.AcceptTCP()
+		debug_conn.Write([]byte("debug output\n"))
+		mutex.RLock()
+		for site, value := range SiteProbes {
+			debug_conn.Write([]byte(site))
+			debug_conn.Write([]byte(":\n"))
+			for probe_ip, _ := range value {
+				debug_conn.Write([]byte(probe_ip))
+				debug_conn.Write([]byte("\n"))
+			}
+		}
+		mutex.RUnlock()
+		debug_conn.Close()
+	}
+}
+
 //Main probe's logic's implementation
 func StartProbe(cfg_dict cfg.CfgDict) {
 	var ladr, masterAddr net.TCPAddr
@@ -421,6 +447,9 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	feedback_chan_w := make(chan int)
 	keepalive_chan := make(chan int)
 	var mutex sync.RWMutex
+	if cfg_dict.DebugPortProbe != 0 {
+		go DebugOutputProbe(SiteProbes, &mutex, cfg_dict)
+	}
 	go netutils.ReadFromTCP(master_conn, msg_buf, read_chan, feedback_chan_r)
 	go netutils.WriteToTCP(master_conn, write_chan, feedback_chan_w)
 	go ReadFromUDP(udpconn, cfg_dict, udp_msg_buf, udp_read_chan)
@@ -522,6 +551,30 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	return
 }
 
+func DebugOutputMaster(Probes map[string]ProbeDescrMaster,
+	mutex *sync.RWMutex, cfg_dict cfg.CfgDict) {
+	var debugAddr net.TCPAddr
+	debugAddr.IP = net.ParseIP("127.0.0.1")
+	debugAddr.Port = cfg_dict.DebugPort
+	debug_socket, err := net.ListenTCP("tcp", &debugAddr)
+	if err != nil {
+		panic("cant bind to debug socket")
+	}
+	for {
+		debug_conn, _ := debug_socket.AcceptTCP()
+		debug_conn.Write([]byte("debug output\n"))
+		mutex.RLock()
+		for key, value := range Probes {
+			debug_conn.Write([]byte(key))
+			debug_conn.Write([]byte(" "))
+			debug_conn.Write([]byte(value.Location))
+			debug_conn.Write([]byte("\n"))
+		}
+		mutex.RUnlock()
+		debug_conn.Close()
+	}
+}
+
 //Central hub at master, which runs new goroutine for each probe
 func StartMaster(cfg_dict cfg.CfgDict) {
 	Probes := make(map[string]ProbeDescrMaster)
@@ -533,6 +586,9 @@ func StartMaster(cfg_dict cfg.CfgDict) {
 	unsub_chan := make(chan rtnm_pubsub.PubSubMeta)
 	pub_chan := make(chan rtnm_pubsub.ProbeInfo)
 	external_report_chan := make(chan []byte, 100)
+	if cfg_dict.DebugPort != 0 {
+		go DebugOutputMaster(Probes, &probes_mutex, cfg_dict)
+	}
 	go rtnm_pubsub.StartBroker(sub_chan, unsub_chan, pub_chan)
 	go reporter.CollectReportGraphite(external_report_chan, cfg_dict)
 	master_socket, err := net.ListenTCP("tcp", &tcpAddr)
