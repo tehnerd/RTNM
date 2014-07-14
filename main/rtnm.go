@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"rtnm/cfg"
 	"rtnm/roles"
@@ -12,7 +11,6 @@ func main() {
 		os.Exit(1)
 	}
 	cfg_dict := cfg.ReadConfig()
-	fmt.Println(cfg_dict)
 	if cfg_dict.CnC {
 		roles.StartMaster(cfg_dict)
 	} else {

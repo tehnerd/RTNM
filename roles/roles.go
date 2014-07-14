@@ -1,7 +1,6 @@
 package roles
 
 import (
-	"code.google.com/p/goprotobuf/proto"
 	"fmt"
 	"math/rand"
 	"net"
@@ -18,6 +17,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"code.google.com/p/goprotobuf/proto"
 )
 
 type ProbeDescrMaster struct {
@@ -299,7 +300,9 @@ func PeriodicTests(SiteProbes map[string]map[string]ProbeDescrProbe,
 		if len(SiteMap) == 0 && len(SiteProbes) != 0 {
 			mutex.Lock()
 			for key, _ := range SiteProbes {
-				SiteMap[key] = 1
+				if key != (*cfg_dict).Location {
+					SiteMap[key] = 1
+				}
 			}
 			mutex.Unlock()
 		}
@@ -549,7 +552,9 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 						mutex.Lock()
 						SiteProbes[NewProbe.Location] = make(map[string]ProbeDescrProbe)
 						SiteProbes[NewProbe.Location][NewProbe.IP.String()] = NewProbe
-						SiteMap[NewProbe.Location] = 0
+						if NewProbe.Location != cfg_dict.Location {
+							SiteMap[NewProbe.Location] = 1
+						}
 						mutex.Unlock()
 					} else {
 						mutex.RLock()
