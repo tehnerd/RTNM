@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -294,7 +295,7 @@ func LatencyTestReply(msg UDPMessage, udp_write_chan chan UDPMessage) {
 func PeriodicTests(SiteProbes map[string]map[string]ProbeDescrProbe,
 	SiteMap map[string]int, udp_write_chan chan UDPMessage,
 	latency_test_chan chan UDPMessage, cfg_dict *cfg.CfgDict,
-	flag *int, mutex *sync.RWMutex, report_chan chan TestsReport) {
+	flag *int32, mutex *sync.RWMutex, report_chan chan TestsReport) {
 	//TODO: add feedback chan
 	for {
 		if len(SiteMap) == 0 && len(SiteProbes) != 0 {
@@ -322,7 +323,7 @@ func PeriodicTests(SiteProbes map[string]map[string]ProbeDescrProbe,
 			cntr := 0
 			for _, value := range SiteProbes[Site] {
 				if int32(cntr) == probe_n {
-					*flag = 1
+					atomic.AddInt32(flag, 1)
 					lock_flag = 0
 					mutex.RUnlock()
 					mutex.Lock()
@@ -343,7 +344,7 @@ func PeriodicTests(SiteProbes map[string]map[string]ProbeDescrProbe,
 
 //latency test initiated from our side
 func LatencyTest(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
-	udp_write_chan chan UDPMessage, rcvd_msg chan UDPMessage, flag *int,
+	udp_write_chan chan UDPMessage, rcvd_msg chan UDPMessage, flag *int32,
 	report_chan chan TestsReport) {
 	remote_addr := strings.Join([]string{remote_probe.IP.String(),
 		strconv.Itoa((*cfg_dict).Port)}, ":")
@@ -390,7 +391,7 @@ func LatencyTest(remote_probe ProbeDescrProbe, cfg_dict *cfg.CfgDict,
 			}
 		}
 	}
-	*flag = 0
+	atomic.AddInt32(flag, -1)
 	result := TestsReport{report, remote_probe.Location}
 	report_chan <- result
 }
@@ -513,7 +514,7 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	write_chan <- hello_data
 	go send_keepalive(hello_data, write_chan, keepalive_chan)
 	loop := 1
-	test_running := 0
+	test_running := int32(0)
 	go PeriodicTests(SiteProbes, SiteMap, udp_write_chan, latency_test_chan,
 		&cfg_dict, &test_running, &mutex, report_chan)
 	for loop == 1 {
@@ -594,7 +595,7 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 				continue
 			}
 			if msg.GetTStamp() != nil {
-				if test_running != 0 {
+				if atomic.CompareAndSwapInt32(&test_running, 1, 1) {
 					latency_test_chan <- msg_from_probe
 				} else {
 					go LatencyTestReply(msg_from_probe, udp_write_chan)
