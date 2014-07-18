@@ -131,7 +131,6 @@ func ProbeInitialRegister(sock *net.TCPConn, msg_buf []byte,
 func ProbeInitialSync(write_chan chan []byte, Probes map[string]ProbeDescrMaster,
 	LocalProbe *ProbeDescrMaster, mutex *sync.RWMutex) {
 	mutex.RLock()
-	defer mutex.RUnlock()
 	for ProbeID, ProbeDescr := range Probes {
 		if ProbeID != (*LocalProbe).IP.String() {
 			msg_pb := &rtnm_pb.MSGS{
@@ -145,6 +144,7 @@ func ProbeInitialSync(write_chan chan []byte, Probes map[string]ProbeDescrMaster
 			write_chan <- msg
 		}
 	}
+	mutex.RUnlock()
 }
 
 func RemoveProbe(broker_pub_chan chan rtnm_pubsub.ProbeInfo,
@@ -159,7 +159,12 @@ func RemoveProbe(broker_pub_chan chan rtnm_pubsub.ProbeInfo,
 	mutex.Unlock()
 	broker_unsub_chan <- sub_chan
 	*loop = 0
-	feedback_chan_w <- 1
+	select {
+	case feedback_chan_w <- 1:
+	case feedback := <-feedback_chan_w:
+		feedback_chan_w <- feedback
+	}
+
 }
 
 //Goroutine which controls the Probe
@@ -170,7 +175,7 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 	broker_unsub_chan chan rtnm_pubsub.PubSubMeta,
 	broker_pub_chan chan rtnm_pubsub.ProbeInfo,
 	external_report_chan chan []byte) {
-	msg_buf := make([]byte, 9000)
+	msg_buf := make([]byte, 65535)
 	tcp_msg := make([]byte, 0)
 	defer sock.Close()
 	probe_descr, err := ProbeInitialRegister(sock, msg_buf, cfg_dict, Probes, mutex)
@@ -462,7 +467,7 @@ func DebugOutputProbe(SiteProbes map[string]map[string]ProbeDescrProbe,
 //Main probe's logic's implementation
 func StartProbe(cfg_dict cfg.CfgDict) {
 	var ladr, masterAddr net.TCPAddr
-	msg_buf := make([]byte, 9000)
+	msg_buf := make([]byte, 65535)
 	tcp_msg := make([]byte, 0)
 	udp_msg_buf := make([]byte, 9000)
 	var probe_context ProbeContext
