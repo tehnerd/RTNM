@@ -20,6 +20,7 @@ type CfgDict struct {
 	Tests          []string
 	DebugPort      int
 	DebugPortProbe int
+	Masters        []string
 }
 
 func ReadConfig() CfgDict {
@@ -30,6 +31,8 @@ func ReadConfig() CfgDict {
 	defer fd.Close()
 	var cfg_dict CfgDict
 	cfg_dict.CnC = false
+	var ladr string
+	var masters_ip []string
 	cfg_reader := bufio.NewReader(fd)
 	line, err := cfg_reader.ReadString('\n')
 	for err == nil {
@@ -51,10 +54,12 @@ func ReadConfig() CfgDict {
 					cfg_dict.Tests = append(cfg_dict.Tests, fields[cntr])
 				}
 			case "bind_ip:":
+				ladr = fields[1]
 				cfg_dict.Bind_IP = net.ParseIP(fields[1])
 			case "location:":
 				cfg_dict.Location = fields[1]
 			case "master:":
+				masters_ip = append(masters_ip, fields[1])
 				cfg_dict.Master = net.ParseIP(fields[1])
 			case "peer:":
 				cfg_dict.Peer = net.ParseIP(fields[1])
@@ -71,6 +76,15 @@ func ReadConfig() CfgDict {
 			}
 		}
 		line, err = cfg_reader.ReadString('\n')
+	}
+	ladr = strings.Join([]string{ladr, strconv.Itoa(cfg_dict.Port)}, ":")
+	cfg_dict.Masters = append(cfg_dict.Masters, ladr)
+	if len(masters_ip) > 0 {
+		for cntr := 0; cntr < len(masters_ip); cntr++ {
+			madr := strings.Join([]string{masters_ip[cntr],
+				strconv.Itoa(cfg_dict.Port)}, ":")
+			cfg_dict.Masters = append(cfg_dict.Masters, madr)
+		}
 	}
 	return cfg_dict
 }
