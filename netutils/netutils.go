@@ -147,7 +147,7 @@ func MMReconnectTCPRW(ladr, radr *net.TCPAddr, write_chan chan []byte,
 			sock.Close()
 			continue
 		}
-		loop = 0
+		loop = 2
 		atomic.AddInt32(mcntr, 1)
 		go MMReadTLVFromTCP(sock, read_chan, feedback_from_socket, mnum)
 		go MMWriteToTCP(sock, write_chan, feedback_from_socket, feedback_to_socket, mnum)
@@ -205,7 +205,8 @@ func ConnectionMirrorPool(addresses []string, read_chan chan []byte,
 		ladr = nil
 	}
 	//counter of masters. if == 0 then all masters are dead
-	mcntr := int32(remote_sites)
+	//at the beggining all of em are dead indeed
+	mcntr := int32(0)
 	for cntr := 0; cntr < remote_sites; cntr++ {
 		radrs[cntr], err = net.ResolveTCPAddr("tcp", addresses[1+cntr])
 		if err != nil {

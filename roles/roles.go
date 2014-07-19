@@ -178,22 +178,24 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 	msg_buf := make([]byte, 65535)
 	tcp_msg := make([]byte, 0)
 	defer sock.Close()
-	probe_descr, err := ProbeInitialRegister(sock, msg_buf, cfg_dict, Probes, mutex)
-	if err != nil {
-		return
-	}
+	var probe_descr ProbeDescrMaster
+	//probe_descr, err := ProbeInitialRegister(sock, msg_buf, cfg_dict, Probes, mutex)
+	//if err != nil {
+	//	return
+	//}
 	var sub_chan rtnm_pubsub.PubSubMeta
-	sub_chan.SubscriberID = probe_descr.IP.String()
-	sub_chan.Chan = make(chan rtnm_pubsub.ProbeInfo)
-	broker_sub_chan <- sub_chan
-	broker_pub_chan <- rtnm_pubsub.ProbeInfo{probe_descr.IP, probe_descr.Location, "Add"}
+	//sub_chan.SubscriberID = probe_descr.IP.String()
+	//sub_chan.SubscriberID = probe_descr.IP.String()
+	//sub_chan.Chan = make(chan rtnm_pubsub.ProbeInfo)
+	//broker_sub_chan <- sub_chan
+	//broker_pub_chan <- rtnm_pubsub.ProbeInfo{probe_descr.IP, probe_descr.Location, "Add"}
 	write_chan := make(chan []byte)
 	read_chan := make(chan []byte)
 	feedback_chan_r := make(chan int)
 	feedback_chan_w := make(chan int)
 	go netutils.ReadFromTCP(sock, msg_buf, read_chan, feedback_chan_r)
 	go netutils.WriteToTCP(sock, write_chan, feedback_chan_w)
-	ProbeInitialSync(write_chan, Probes, &probe_descr, mutex)
+	//ProbeInitialSync(write_chan, Probes, &probe_descr, mutex)
 	loop := 1
 	for loop == 1 {
 		select {
@@ -231,6 +233,31 @@ func ControlProbe(sock *net.TCPConn, cfg_dict cfg.CfgDict,
 				}
 				if msg.GetHello() != nil {
 				}
+				if msg.GetPReg() != nil {
+					probe_descr.IP = net.ParseIP(msg.GetPReg().GetProbeIp())
+					probe_descr.Location = msg.GetPReg().GetProbeLocation()
+					probe_descr.Preference = 150
+					mutex.Lock()
+					Probes[msg.GetPReg().GetProbeIp()] = probe_descr
+					mutex.Unlock()
+					sub_chan.SubscriberID = probe_descr.IP.String()
+					sub_chan.SubscriberID = probe_descr.IP.String()
+					sub_chan.Chan = make(chan rtnm_pubsub.ProbeInfo)
+					broker_sub_chan <- sub_chan
+					broker_pub_chan <- rtnm_pubsub.ProbeInfo{probe_descr.IP,
+						probe_descr.Location, "Add"}
+					reg_confirm := &rtnm_pb.MSGS{
+						RConf: &rtnm_pb.MasterRegConfirm{
+							ProbeKA:   proto.Uint32(cfg_dict.KA_interval),
+							TestsList: proto.String(strings.Join(cfg_dict.Tests, " ")),
+						},
+					}
+					data, _ := proto.Marshal(reg_confirm)
+					data = tlvs.GeneratePBTLV(data)
+					write_chan <- data
+					ProbeInitialSync(write_chan, Probes, &probe_descr, mutex)
+				}
+
 				if msg.GetRep() != nil {
 					external_report_chan <- tcp_msg[4:TLV.TLV_length]
 				}
@@ -619,9 +646,6 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 				delete(SiteMap, key)
 			}
 			mutex.Unlock()
-			//go netutils.ReconnectTCPRW(ladr, masterAddr, msg_buf, write_chan,
-			//	read_chan, feedback_chan_w, feedback_chan_r,
-			//	GenerateInitialHello(&cfg_dict))
 		case report := <-report_chan:
 			data := GenerateReport(&report, &cfg_dict)
 			write_chan <- data
