@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"net"
 	"rtnm/tlvs"
+	"sync/atomic"
 	"time"
 )
 
@@ -69,8 +70,12 @@ func MMWriteToTCP(sock *net.TCPConn, write_chan chan []byte,
 		case msg := <-write_chan:
 			_, err := sock.Write(msg)
 			if err != nil {
-				feedback_from_socket <- mnum
-				continue
+				select {
+				case feedback_from_socket <- mnum:
+					continue
+				case loop = <-feedback_to_socket:
+					loop = 0
+				}
 			}
 		case <-feedback_to_socket:
 			loop = 0
@@ -125,9 +130,10 @@ func ReconnectTCPRW(ladr, radr net.TCPAddr, msg_buf []byte, write_chan chan []by
 //reconnecting to remote host for both read and write purpose in multimaster env
 func MMReconnectTCPRW(ladr, radr *net.TCPAddr, write_chan chan []byte,
 	read_chan chan []byte, feedback_from_socket, feedback_to_socket chan int,
-	mnum int, init_msg []byte) {
+	mnum int, init_msg []byte, mcntr *int32) {
 	loop := 1
 	for loop == 1 {
+		//we do use same src port.w/o tw_reuse reuse of the socket is ~60sec
 		time.Sleep(time.Duration(20+rand.Intn(15)) * time.Second)
 		sock, err := net.DialTCP("tcp", ladr, radr)
 		if err != nil {
@@ -142,6 +148,7 @@ func MMReconnectTCPRW(ladr, radr *net.TCPAddr, write_chan chan []byte,
 			continue
 		}
 		loop = 0
+		atomic.AddInt32(mcntr, 1)
 		go MMReadTLVFromTCP(sock, read_chan, feedback_from_socket, mnum)
 		go MMWriteToTCP(sock, write_chan, feedback_from_socket, feedback_to_socket, mnum)
 	}
@@ -182,12 +189,10 @@ func ConnectionMirrorPool(addresses []string, read_chan chan []byte,
 	var err error
 	remote_sites := len(addresses) - 1
 	radrs := make([](*net.TCPAddr), remote_sites)
-	conns := make([](*net.TCPConn), remote_sites)
 	//actually this is probably not needed at all;coz we already have read_chan
 	//but mb add something to it in the future (or remove at all)
 	read_chan_ := make(chan []byte)
 	write_chans := make([]chan []byte, remote_sites)
-	msg_buffs := make([][]byte, remote_sites)
 	feedback_from_socket := make(chan int)
 	feedback_to_sockets := make([]chan int, remote_sites)
 	//addresses must be in "ip:port" format"
@@ -199,39 +204,34 @@ func ConnectionMirrorPool(addresses []string, read_chan chan []byte,
 	} else {
 		ladr = nil
 	}
+	//counter of masters. if == 0 then all masters are dead
+	mcntr := int32(remote_sites)
 	for cntr := 0; cntr < remote_sites; cntr++ {
 		radrs[cntr], err = net.ResolveTCPAddr("tcp", addresses[1+cntr])
 		if err != nil {
 			panic("error in remote addr definition")
 		}
-		//TODO: some of remote addresses could be dead; replace panic with something
-		//more suited real world env
-		conns[cntr], err = net.DialTCP("tcp", ladr, radrs[cntr])
-		if err != nil {
-			panic("cant connect to remote host")
-		}
 		write_chans[cntr] = make(chan []byte, 10)
-		msg_buffs[cntr] = make([]byte, 65535)
 		feedback_to_sockets[cntr] = make(chan int)
-		go MMReadTLVFromTCP(conns[cntr], read_chan_, feedback_from_socket, cntr)
-		go MMWriteToTCP(conns[cntr], write_chans[cntr], feedback_from_socket,
-			feedback_to_sockets[cntr], cntr)
+		go MMReconnectTCPRW(ladr, radrs[cntr], write_chans[cntr],
+			read_chan_, feedback_from_socket, feedback_to_sockets[cntr],
+			cntr, init_msg, &mcntr)
 
 	}
 	loop := 1
-	//counter of masters. if == 0 then all masters are dead
-	mcntr := remote_sites
 	//STATE: POC, that we could abstract multiple remote master sites in such consturction
-	// no error handling in the loop so far
 	for loop == 1 {
 		select {
 		case msg_to_write := <-write_chan:
-			//TODO: test it. len should protect us against dead master. mb change hardcoded 10?
-			for cntr := 0; cntr < remote_sites; cntr++ {
-				if len(write_chans[cntr]) > 8 {
-					continue
+			//TODO: test it. len should protect us against dead master.
+			// mb change hardcoded 10?
+			if !atomic.CompareAndSwapInt32(&mcntr, 0, 0) {
+				for cntr := 0; cntr < remote_sites; cntr++ {
+					if len(write_chans[cntr]) > 8 {
+						continue
+					}
+					write_chans[cntr] <- msg_to_write
 				}
-				write_chans[cntr] <- msg_to_write
 			}
 		case msg_to_read := <-read_chan_:
 			read_chan <- msg_to_read
@@ -239,8 +239,11 @@ func ConnectionMirrorPool(addresses []string, read_chan chan []byte,
 			feedback_to_sockets[feedback] <- feedback
 			go MMReconnectTCPRW(ladr, radrs[feedback], write_chans[feedback],
 				read_chan_, feedback_from_socket, feedback_to_sockets[feedback],
-				feedback, init_msg)
-			mcntr -= 1
+				feedback, init_msg, &mcntr)
+			atomic.AddInt32(&mcntr, -1)
+			if atomic.CompareAndSwapInt32(&mcntr, 0, 0) {
+				feedback_chan_r <- 1
+			}
 		}
 	}
 }
