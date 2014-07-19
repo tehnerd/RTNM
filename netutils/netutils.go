@@ -24,12 +24,13 @@ func ReadFromTCP(sock *net.TCPConn, msg_buf []byte, read_chan chan []byte,
 	fmt.Println("exiting read")
 }
 
-/* this is tlv aware instance of the ReadFromTCP. we do need such awarnes in case
+/* this is tlv aware instance of the ReadFromTCP for the multinode master deployments.
+we do need such awarnes in case
 where lots of readers sends msgs to the same chan []byte to protect ourselfs against
 the situation where chunk of msgs could be blended inside the channel
 */
-func ReadTLVFromTCP(sock *net.TCPConn, read_chan chan []byte,
-	feedback_chan chan int) {
+func MMReadTLVFromTCP(sock *net.TCPConn, read_chan chan []byte,
+	feedback_from_socket chan int, mnum int) {
 	msg_buf := make([]byte, 65535)
 	tcp_msg := make([]byte, 0)
 	var tlv_header tlvs.TLVHeader
@@ -37,7 +38,7 @@ func ReadTLVFromTCP(sock *net.TCPConn, read_chan chan []byte,
 	for loop == 1 {
 		bytes, err := sock.Read(msg_buf)
 		if err != nil {
-			feedback_chan <- 1
+			feedback_from_socket <- mnum
 			loop = 0
 			continue
 		}
@@ -58,7 +59,26 @@ func ReadTLVFromTCP(sock *net.TCPConn, read_chan chan []byte,
 	fmt.Println("exiting read")
 }
 
-//Receive msg from write_chan and send it to tcp socket
+/*Receive msg from write_chan and send it to tcp socket
+Version for the multimaster deploy*/
+func MMWriteToTCP(sock *net.TCPConn, write_chan chan []byte,
+	feedback_from_socket, feedback_to_socket chan int, mnum int) {
+	loop := 1
+	for loop == 1 {
+		select {
+		case msg := <-write_chan:
+			_, err := sock.Write(msg)
+			if err != nil {
+				feedback_from_socket <- mnum
+				continue
+			}
+		case <-feedback_to_socket:
+			loop = 0
+		}
+	}
+	fmt.Println("exiting write")
+}
+
 func WriteToTCP(sock *net.TCPConn, write_chan chan []byte,
 	feedback_chan chan int) {
 	loop := 1
@@ -102,6 +122,32 @@ func ReconnectTCPRW(ladr, radr net.TCPAddr, msg_buf []byte, write_chan chan []by
 	fmt.Println("reconnected to remote host")
 }
 
+//reconnecting to remote host for both read and write purpose in multimaster env
+func MMReconnectTCPRW(ladr, radr *net.TCPAddr, write_chan chan []byte,
+	read_chan chan []byte, feedback_from_socket, feedback_to_socket chan int,
+	mnum int, init_msg []byte) {
+	loop := 1
+	for loop == 1 {
+		time.Sleep(time.Duration(20+rand.Intn(15)) * time.Second)
+		sock, err := net.DialTCP("tcp", ladr, radr)
+		if err != nil {
+			continue
+		}
+		//testing health of the new socket. GO sometimes doesnt rise the error when
+		// we receive RST from remote side
+		_, err = sock.Write(init_msg)
+		if err != nil {
+			fmt.Println("dead socket")
+			sock.Close()
+			continue
+		}
+		loop = 0
+		go MMReadTLVFromTCP(sock, read_chan, feedback_from_socket, mnum)
+		go MMWriteToTCP(sock, write_chan, feedback_from_socket, feedback_to_socket, mnum)
+	}
+	fmt.Println("reconnected to remote host")
+}
+
 //reconnecting to remote host for write only
 func ReconnectTCPW(radr net.TCPAddr, write_chan chan []byte, feedback_chan chan int) {
 	loop := 1
@@ -127,7 +173,8 @@ func ReconnectTCPW(radr net.TCPAddr, write_chan chan []byte, feedback_chan chan 
 
 //connecting to multiple remote sites and sent exactly the same msg to all of em
 func ConnectionMirrorPool(addresses []string, read_chan chan []byte,
-	write_chan chan []byte) {
+	write_chan chan []byte, feedback_chan_r, feedback_chan_w chan int,
+	init_msg []byte) {
 	if len(addresses) < 2 {
 		panic("we need at least ladr and one remote addr")
 	}
@@ -141,8 +188,8 @@ func ConnectionMirrorPool(addresses []string, read_chan chan []byte,
 	read_chan_ := make(chan []byte)
 	write_chans := make([]chan []byte, remote_sites)
 	msg_buffs := make([][]byte, remote_sites)
-	feedback_chans_r := make([]chan int, remote_sites)
-	feedback_chans_w := make([]chan int, remote_sites)
+	feedback_from_socket := make(chan int)
+	feedback_to_sockets := make([]chan int, remote_sites)
 	//addresses must be in "ip:port" format"
 	if len(addresses[0]) > 0 {
 		ladr, err = net.ResolveTCPAddr("tcp", addresses[0])
@@ -163,26 +210,37 @@ func ConnectionMirrorPool(addresses []string, read_chan chan []byte,
 		if err != nil {
 			panic("cant connect to remote host")
 		}
-		write_chans[cntr] = make(chan []byte)
+		write_chans[cntr] = make(chan []byte, 10)
 		msg_buffs[cntr] = make([]byte, 65535)
-		feedback_chans_r[cntr] = make(chan int)
-		feedback_chans_w[cntr] = make(chan int)
-		go ReadTLVFromTCP(conns[cntr], read_chan_, feedback_chans_r[cntr])
-		go WriteToTCP(conns[cntr], write_chans[cntr], feedback_chans_w[cntr])
+		feedback_to_sockets[cntr] = make(chan int)
+		go MMReadTLVFromTCP(conns[cntr], read_chan_, feedback_from_socket, cntr)
+		go MMWriteToTCP(conns[cntr], write_chans[cntr], feedback_from_socket,
+			feedback_to_sockets[cntr], cntr)
 
 	}
 	loop := 1
+	//counter of masters. if == 0 then all masters are dead
+	mcntr := remote_sites
 	//STATE: POC, that we could abstract multiple remote master sites in such consturction
 	// no error handling in the loop so far
 	for loop == 1 {
 		select {
 		case msg_to_write := <-write_chan:
-			//this is just a POC; we be blocked forever in one of the remote is dead
+			//TODO: test it. len should protect us against dead master. mb change hardcoded 10?
 			for cntr := 0; cntr < remote_sites; cntr++ {
+				if len(write_chans[cntr]) > 8 {
+					continue
+				}
 				write_chans[cntr] <- msg_to_write
 			}
 		case msg_to_read := <-read_chan_:
 			read_chan <- msg_to_read
+		case feedback := <-feedback_from_socket:
+			feedback_to_sockets[feedback] <- feedback
+			go MMReconnectTCPRW(ladr, radrs[feedback], write_chans[feedback],
+				read_chan_, feedback_from_socket, feedback_to_sockets[feedback],
+				feedback, init_msg)
+			mcntr -= 1
 		}
 	}
 }

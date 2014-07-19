@@ -21,6 +21,7 @@ type CfgDict struct {
 	DebugPort      int
 	DebugPortProbe int
 	Masters        []string
+	ProbePort      int
 }
 
 func ReadConfig() CfgDict {
@@ -42,6 +43,9 @@ func ReadConfig() CfgDict {
 			case "port:":
 				port, _ := strconv.Atoi(fields[1])
 				cfg_dict.Port = port
+			case "probe_port:":
+				port, _ := strconv.Atoi(fields[1])
+				cfg_dict.ProbePort = port
 			case "cnc:":
 				if fields[1] == "true" {
 					cfg_dict.CnC = true
@@ -77,7 +81,11 @@ func ReadConfig() CfgDict {
 		}
 		line, err = cfg_reader.ReadString('\n')
 	}
-	ladr = strings.Join([]string{ladr, strconv.Itoa(cfg_dict.Port)}, ":")
+	if cfg_dict.ProbePort == 0 {
+		ladr = strings.Join([]string{ladr, strconv.Itoa(cfg_dict.Port)}, ":")
+	} else {
+		ladr = strings.Join([]string{ladr, strconv.Itoa(cfg_dict.ProbePort)}, ":")
+	}
 	cfg_dict.Masters = append(cfg_dict.Masters, ladr)
 	if len(masters_ip) > 0 {
 		for cntr := 0; cntr < len(masters_ip); cntr++ {

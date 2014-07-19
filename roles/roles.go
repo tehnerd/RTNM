@@ -466,17 +466,19 @@ func DebugOutputProbe(SiteProbes map[string]map[string]ProbeDescrProbe,
 
 //Main probe's logic's implementation
 func StartProbe(cfg_dict cfg.CfgDict) {
-	var ladr, masterAddr net.TCPAddr
-	msg_buf := make([]byte, 65535)
+	//var ladr, masterAddr net.TCPAddr
+	//msg_buf := make([]byte, 65535)
 	tcp_msg := make([]byte, 0)
 	udp_msg_buf := make([]byte, 9000)
 	var probe_context ProbeContext
 	SiteProbes := make(map[string]map[string]ProbeDescrProbe)
 	SiteMap := make(map[string]int)
-	masterAddr.IP = cfg_dict.Master
-	masterAddr.Port = cfg_dict.Port
-	ladr.IP = cfg_dict.Bind_IP
-	master_conn, _ := net.DialTCP("tcp", &ladr, &masterAddr)
+	/*
+		masterAddr.IP = cfg_dict.Master
+		masterAddr.Port = cfg_dict.Port
+		ladr.IP = cfg_dict.Bind_IP
+		master_conn, _ := net.DialTCP("tcp", &ladr, &masterAddr)
+	*/
 	udp_lladr := strings.Join([]string{cfg_dict.Bind_IP.String(),
 		strconv.Itoa(cfg_dict.Port)}, ":")
 	udpaddr, err := net.ResolveUDPAddr("udp", udp_lladr)
@@ -487,7 +489,7 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	if err != nil {
 		panic("cant bind udp to local address")
 	}
-	defer master_conn.Close()
+	//defer master_conn.Close()
 	defer udpconn.Close()
 	write_chan := make(chan []byte)
 	read_chan := make(chan []byte)
@@ -503,8 +505,10 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	if cfg_dict.DebugPortProbe != 0 {
 		go DebugOutputProbe(SiteProbes, &mutex, cfg_dict)
 	}
-	go netutils.ReadFromTCP(master_conn, msg_buf, read_chan, feedback_chan_r)
-	go netutils.WriteToTCP(master_conn, write_chan, feedback_chan_w)
+	go netutils.ConnectionMirrorPool(cfg_dict.Masters, read_chan, write_chan,
+		feedback_chan_r, feedback_chan_w, GenerateInitialHello(&cfg_dict))
+	//go netutils.ReadFromTCP(master_conn, msg_buf, read_chan, feedback_chan_r)
+	//go netutils.WriteToTCP(master_conn, write_chan, feedback_chan_w)
 	go ReadFromUDP(udpconn, cfg_dict, udp_msg_buf, udp_read_chan)
 	go WriteToUDP(udpconn, cfg_dict, udp_write_chan)
 	hello_msg := &rtnm_pb.MSGS{
@@ -615,9 +619,9 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 			for key, _ := range SiteMap {
 				delete(SiteMap, key)
 			}
-			go netutils.ReconnectTCPRW(ladr, masterAddr, msg_buf, write_chan,
-				read_chan, feedback_chan_w, feedback_chan_r,
-				GenerateInitialHello(&cfg_dict))
+			//go netutils.ReconnectTCPRW(ladr, masterAddr, msg_buf, write_chan,
+			//	read_chan, feedback_chan_w, feedback_chan_r,
+			//	GenerateInitialHello(&cfg_dict))
 		case report := <-report_chan:
 			data := GenerateReport(&report, &cfg_dict)
 			write_chan <- data
