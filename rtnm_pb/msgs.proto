@@ -34,6 +34,7 @@ new probe registers */
 message AddProbe{
     optional string ProbeIp = 1;
     optional string ProbeLocation = 2;
+    optional string MasterIp = 3;
 }
 
 /* msg from master to probe, master send it when
@@ -41,6 +42,7 @@ some probe timed out */
 message RemoveProbe{
     optional string ProbeIp = 1;
     optional string ProbeLocation = 2;
+    optional string MasterIp = 3;
 }
 
 /* msg from probe to probe. we are using it to calculate timeskew

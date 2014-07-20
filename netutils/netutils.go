@@ -180,7 +180,7 @@ func ReconnectTCPW(radr net.TCPAddr, write_chan chan []byte, feedback_chan chan 
 
 //connecting to multiple remote sites and sent exactly the same msg to all of em
 func ConnectionMirrorPool(addresses []string, read_chan chan []byte,
-	write_chan chan []byte, feedback_chan_r, feedback_chan_w chan int,
+	write_chan chan []byte, feedback_chan1, feedback_chan2 chan int,
 	init_msg []byte) {
 	if len(addresses) < 2 {
 		panic("we need at least ladr and one remote addr")
@@ -243,7 +243,7 @@ func ConnectionMirrorPool(addresses []string, read_chan chan []byte,
 				feedback, init_msg, &mcntr)
 			atomic.AddInt32(&mcntr, -1)
 			if atomic.CompareAndSwapInt32(&mcntr, 0, 0) {
-				feedback_chan_r <- 1
+				feedback_chan1 <- 1
 			}
 		}
 	}

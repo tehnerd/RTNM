@@ -165,6 +165,7 @@ func (m *ProbeHello) GetHello() string {
 type AddProbe struct {
 	ProbeIp          *string `protobuf:"bytes,1,opt" json:"ProbeIp,omitempty"`
 	ProbeLocation    *string `protobuf:"bytes,2,opt" json:"ProbeLocation,omitempty"`
+	MasterIp         *string `protobuf:"bytes,3,opt" json:"MasterIp,omitempty"`
 	XXX_unrecognized []byte  `json:"-"`
 }
 
@@ -186,11 +187,19 @@ func (m *AddProbe) GetProbeLocation() string {
 	return ""
 }
 
+func (m *AddProbe) GetMasterIp() string {
+	if m != nil && m.MasterIp != nil {
+		return *m.MasterIp
+	}
+	return ""
+}
+
 // msg from master to probe, master send it when
 // some probe timed out
 type RemoveProbe struct {
 	ProbeIp          *string `protobuf:"bytes,1,opt" json:"ProbeIp,omitempty"`
 	ProbeLocation    *string `protobuf:"bytes,2,opt" json:"ProbeLocation,omitempty"`
+	MasterIp         *string `protobuf:"bytes,3,opt" json:"MasterIp,omitempty"`
 	XXX_unrecognized []byte  `json:"-"`
 }
 
@@ -208,6 +217,13 @@ func (m *RemoveProbe) GetProbeIp() string {
 func (m *RemoveProbe) GetProbeLocation() string {
 	if m != nil && m.ProbeLocation != nil {
 		return *m.ProbeLocation
+	}
+	return ""
+}
+
+func (m *RemoveProbe) GetMasterIp() string {
+	if m != nil && m.MasterIp != nil {
+		return *m.MasterIp
 	}
 	return ""
 }
