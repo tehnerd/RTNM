@@ -199,6 +199,42 @@ func DebugOutputMaster(Probes map[string]ProbeDescrMaster,
 	}
 }
 
+func PeersHandler(cfg_dict cfg.CfgDict, Probes *ProbeDescrMaster,
+	mutex *sync.RWMutex, to_peer_handler chan []byte) {
+	feedback_chan1 := make(chan int)
+	feedback_chan2 := make(chan int)
+	write_chan := make(chan netutils.DispatchMsg)
+	read_chan := make(chan []byte)
+	init_msg := tlvs.TLVHeader{1, 2, 4}
+	var TLV tlvs.TLVHeader
+	go netutils.ConnectionPoolDispatcher(cfg_dict.Peers, read_chan, write_chan,
+		feedback_chan1, feedback_chan2, init_msg.Encode())
+	for {
+		select {
+		case local_msg := <-to_peer_handler:
+			msg := &rtnm_pb.MSGS{}
+			err := proto.Unmarshal(local_msg, msg)
+			if err != nil {
+				fmt.Println("cant unmarshal local msg to peer")
+				continue
+			}
+		//msg came from the MMReadTLVFromTCP so id already checked for sanity
+		//in terms of length etc and there is only 1 tlv in this msg
+		case msg_from_peer := <-read_chan:
+			TLV.Decode(msg_from_peer[0:4])
+			if TLV.TLV_type != 1 && TLV.TLV_subtype != 1 {
+				continue
+			}
+			msg := &rtnm_pb.MSGS{}
+			err := proto.Unmarshal(msg_from_peer[4:], msg)
+			if err != nil {
+				fmt.Println("cant unmarshal msg from remote peer")
+			}
+
+		}
+	}
+}
+
 //Central hub at master, which runs new goroutine for each probe
 func StartMaster(cfg_dict cfg.CfgDict) {
 	Probes := make(map[string]ProbeDescrMaster)

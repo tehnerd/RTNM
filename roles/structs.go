@@ -3,6 +3,7 @@ package roles
 import (
 	"net"
 	"rtnm/cfg"
+	"rtnm/tlvs"
 
 	"syscall"
 	"time"
@@ -36,8 +37,11 @@ type TestsReport struct {
 	PeerSite string
 }
 
-func ReadFromUDP(udpconn *net.UDPConn, cfg_dict cfg.CfgDict, msg_buf []byte,
+func ReadFromUDP(udpconn *net.UDPConn, cfg_dict cfg.CfgDict,
 	read_chan chan UDPMessage) {
+	msg_buf := make([]byte, 9000)
+	udp_msg := make([]byte, 0)
+	var TLV tlvs.TLVHeader
 	for {
 		var msg UDPMessage
 		bytes, raddr, err := udpconn.ReadFromUDP(msg_buf)
@@ -45,10 +49,23 @@ func ReadFromUDP(udpconn *net.UDPConn, cfg_dict cfg.CfgDict, msg_buf []byte,
 			//TODO: add feedback like in tcp
 			panic("error while listening for the udp connection")
 		}
-		msg.Time = time.Now()
-		msg.Message = msg_buf[:bytes]
-		msg.UDPAddr = *raddr
-		read_chan <- msg
+		udp_msg = append(udp_msg, msg_buf[:bytes]...)
+		for {
+			if len(udp_msg) < 4 {
+				break
+			}
+			TLV.Decode(udp_msg[:4])
+			if TLV.TLV_type != 1 && TLV.TLV_subtype != 1 {
+				udp_msg = udp_msg[:TLV.TLV_length]
+				continue
+			}
+			msg.Time = time.Now()
+			msg.Message = udp_msg[4:TLV.TLV_length]
+			msg.UDPAddr = *raddr
+			read_chan <- msg
+			udp_msg = udp_msg[TLV.TLV_length:]
+		}
+		udp_msg = udp_msg[:0]
 	}
 }
 
@@ -60,6 +77,7 @@ func WriteToUDP(udpconn *net.UDPConn, cfg_dict cfg.CfgDict,
 		syscall.SetsockoptInt(int(fd.Fd()), syscall.IPPROTO_IP, syscall.IP_TOS,
 			int(msg.TOS))
 		fd.Close()
+		msg.Message = tlvs.GeneratePBTLV(msg.Message)
 		udpconn.WriteToUDP(msg.Message, &msg.UDPAddr)
 	}
 }

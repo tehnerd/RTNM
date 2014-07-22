@@ -248,3 +248,79 @@ func ConnectionMirrorPool(addresses []string, read_chan chan []byte,
 		}
 	}
 }
+
+type DispatchMsg struct {
+	Msg []byte
+	Dst string
+}
+
+//connecting to multiple remote sites with ability to send msg to exactly defined remote site
+//or all of em. TODO: prob will merge Mirror with this one
+func ConnectionPoolDispatcher(addresses []string, read_chan chan []byte,
+	write_chan chan DispatchMsg, feedback_chan1, feedback_chan2 chan int,
+	init_msg []byte) {
+	if len(addresses) < 2 {
+		panic("we need at least ladr and one remote addr")
+	}
+	var ladr *net.TCPAddr
+	var err error
+	remote_sites := len(addresses) - 1
+	radrs := make([](*net.TCPAddr), remote_sites)
+	read_chan_ := make(chan []byte)
+	write_chans := make([]chan []byte, remote_sites)
+	feedback_from_socket := make(chan int)
+	feedback_to_sockets := make([]chan int, remote_sites)
+	//addresses must be in "ip:port" format"
+	if len(addresses[0]) > 0 {
+		ladr, err = net.ResolveTCPAddr("tcp", addresses[0])
+		if err != nil {
+			panic("error in ladr definition")
+		}
+	} else {
+		ladr = nil
+	}
+	//counter of masters. if == 0 then all masters are dead
+	//at the beggining all of em are dead indeed
+	mcntr := int32(0)
+	for cntr := 0; cntr < remote_sites; cntr++ {
+		radrs[cntr], err = net.ResolveTCPAddr("tcp", addresses[1+cntr])
+		if err != nil {
+			panic("error in remote addr definition")
+		}
+		write_chans[cntr] = make(chan []byte, 10)
+		feedback_to_sockets[cntr] = make(chan int)
+		go MMReconnectTCPRW(ladr, radrs[cntr], write_chans[cntr],
+			read_chan_, feedback_from_socket, feedback_to_sockets[cntr],
+			cntr, init_msg, &mcntr)
+
+	}
+	loop := 1
+	for loop == 1 {
+		select {
+		case msg := <-write_chan:
+			msg_to_write := msg.Msg
+			if !atomic.CompareAndSwapInt32(&mcntr, 0, 0) {
+				for cntr := 0; cntr < remote_sites; cntr++ {
+					if len(write_chans[cntr]) > 8 {
+						continue
+					}
+					if msg.Dst != "" && msg.Dst != (*radrs[cntr]).IP.String() {
+						continue
+					}
+					write_chans[cntr] <- msg_to_write
+				}
+			}
+		case msg_to_read := <-read_chan_:
+			read_chan <- msg_to_read
+		case feedback := <-feedback_from_socket:
+			feedback_to_sockets[feedback] <- feedback
+			go MMReconnectTCPRW(ladr, radrs[feedback], write_chans[feedback],
+				read_chan_, feedback_from_socket, feedback_to_sockets[feedback],
+				feedback, init_msg, &mcntr)
+			atomic.AddInt32(&mcntr, -1)
+			if atomic.CompareAndSwapInt32(&mcntr, 0, 0) {
+				feedback_chan1 <- 1
+			}
+		}
+	}
+}

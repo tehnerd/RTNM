@@ -10,6 +10,8 @@ message MSGS {
     optional RemoveProbe RProbe = 5;
     optional TimeStamps TStamp = 6;
     optional Report Rep = 7;
+    optional PeerAddProbe PAProbe = 9;
+    optional PeerRemoveProbe PRProbe = 10;
 }
 
 //msg, which probe sends to master during startup
@@ -65,3 +67,21 @@ message Report{
     optional string LocalSite = 7;
     optional string RemoteSite = 8;
 }
+
+/* msg from peer(master) to peer, peer send it when
+new probe registers */
+message PeerAddProbe{
+    optional string ProbeIp = 1;
+    optional string ProbeLocation = 2;
+    optional string OriginMaster = 3;
+}
+
+/* msg from peer(master) to peer, peer send it when
+some probe timed out */
+message PeerRemoveProbe{
+    optional string ProbeIp = 1;
+    optional string ProbeLocation = 2;
+    optional string OriginMaster = 3;
+}
+
+

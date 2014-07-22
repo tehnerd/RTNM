@@ -216,7 +216,6 @@ func DebugOutputProbe(SiteProbes map[string]map[string]ProbeDescrProbe,
 //Main probe's logic's implementation
 func StartProbe(cfg_dict cfg.CfgDict) {
 	tcp_msg := make([]byte, 0)
-	udp_msg_buf := make([]byte, 9000)
 	var probe_context ProbeContext
 	SiteProbes := make(map[string]map[string]ProbeDescrProbe)
 	SiteMap := make(map[string]int)
@@ -247,7 +246,7 @@ func StartProbe(cfg_dict cfg.CfgDict) {
 	}
 	go netutils.ConnectionMirrorPool(cfg_dict.Masters, read_chan, write_chan,
 		feedback_chan_r, feedback_chan_w, GenerateInitialHello(&cfg_dict))
-	go ReadFromUDP(udpconn, cfg_dict, udp_msg_buf, udp_read_chan)
+	go ReadFromUDP(udpconn, cfg_dict, udp_read_chan)
 	go WriteToUDP(udpconn, cfg_dict, udp_write_chan)
 	hello_msg := &rtnm_pb.MSGS{
 		Hello: &rtnm_pb.ProbeHello{

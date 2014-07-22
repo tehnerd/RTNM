@@ -17,6 +17,8 @@ It has these top-level messages:
 	RemoveProbe
 	TimeStamps
 	Report
+	PeerAddProbe
+	PeerRemoveProbe
 */
 package rtnm_pb
 
@@ -37,6 +39,8 @@ type MSGS struct {
 	RProbe           *RemoveProbe      `protobuf:"bytes,5,opt" json:"RProbe,omitempty"`
 	TStamp           *TimeStamps       `protobuf:"bytes,6,opt" json:"TStamp,omitempty"`
 	Rep              *Report           `protobuf:"bytes,7,opt" json:"Rep,omitempty"`
+	PAProbe          *PeerAddProbe     `protobuf:"bytes,9,opt" json:"PAProbe,omitempty"`
+	PRProbe          *PeerRemoveProbe  `protobuf:"bytes,10,opt" json:"PRProbe,omitempty"`
 	XXX_unrecognized []byte            `json:"-"`
 }
 
@@ -89,6 +93,20 @@ func (m *MSGS) GetTStamp() *TimeStamps {
 func (m *MSGS) GetRep() *Report {
 	if m != nil {
 		return m.Rep
+	}
+	return nil
+}
+
+func (m *MSGS) GetPAProbe() *PeerAddProbe {
+	if m != nil {
+		return m.PAProbe
+	}
+	return nil
+}
+
+func (m *MSGS) GetPRProbe() *PeerRemoveProbe {
+	if m != nil {
+		return m.PRProbe
 	}
 	return nil
 }
@@ -339,6 +357,74 @@ func (m *Report) GetLocalSite() string {
 func (m *Report) GetRemoteSite() string {
 	if m != nil && m.RemoteSite != nil {
 		return *m.RemoteSite
+	}
+	return ""
+}
+
+// msg from peer(master) to peer, peer send it when
+// new probe registers
+type PeerAddProbe struct {
+	ProbeIp          *string `protobuf:"bytes,1,opt" json:"ProbeIp,omitempty"`
+	ProbeLocation    *string `protobuf:"bytes,2,opt" json:"ProbeLocation,omitempty"`
+	OriginMaster     *string `protobuf:"bytes,3,opt" json:"OriginMaster,omitempty"`
+	XXX_unrecognized []byte  `json:"-"`
+}
+
+func (m *PeerAddProbe) Reset()         { *m = PeerAddProbe{} }
+func (m *PeerAddProbe) String() string { return proto.CompactTextString(m) }
+func (*PeerAddProbe) ProtoMessage()    {}
+
+func (m *PeerAddProbe) GetProbeIp() string {
+	if m != nil && m.ProbeIp != nil {
+		return *m.ProbeIp
+	}
+	return ""
+}
+
+func (m *PeerAddProbe) GetProbeLocation() string {
+	if m != nil && m.ProbeLocation != nil {
+		return *m.ProbeLocation
+	}
+	return ""
+}
+
+func (m *PeerAddProbe) GetOriginMaster() string {
+	if m != nil && m.OriginMaster != nil {
+		return *m.OriginMaster
+	}
+	return ""
+}
+
+// msg from peer(master) to peer, peer send it when
+// some probe timed out
+type PeerRemoveProbe struct {
+	ProbeIp          *string `protobuf:"bytes,1,opt" json:"ProbeIp,omitempty"`
+	ProbeLocation    *string `protobuf:"bytes,2,opt" json:"ProbeLocation,omitempty"`
+	OriginMaster     *string `protobuf:"bytes,3,opt" json:"OriginMaster,omitempty"`
+	XXX_unrecognized []byte  `json:"-"`
+}
+
+func (m *PeerRemoveProbe) Reset()         { *m = PeerRemoveProbe{} }
+func (m *PeerRemoveProbe) String() string { return proto.CompactTextString(m) }
+func (*PeerRemoveProbe) ProtoMessage()    {}
+
+func (m *PeerRemoveProbe) GetProbeIp() string {
+	if m != nil && m.ProbeIp != nil {
+		return *m.ProbeIp
+	}
+	return ""
+}
+
+func (m *PeerRemoveProbe) GetProbeLocation() string {
+	if m != nil && m.ProbeLocation != nil {
+		return *m.ProbeLocation
+	}
+	return ""
+}
+
+func (m *PeerRemoveProbe) GetOriginMaster() string {
+	if m != nil && m.OriginMaster != nil {
+		return *m.OriginMaster
 	}
 	return ""
 }

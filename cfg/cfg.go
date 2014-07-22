@@ -21,6 +21,7 @@ type CfgDict struct {
 	DebugPort      int
 	DebugPortProbe int
 	Masters        []string
+	Peers          []string
 	ProbePort      int
 }
 
