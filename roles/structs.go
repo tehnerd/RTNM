@@ -56,7 +56,7 @@ func ReadFromUDP(udpconn *net.UDPConn, cfg_dict cfg.CfgDict,
 			}
 			TLV.Decode(udp_msg[:4])
 			if TLV.TLV_type != 1 && TLV.TLV_subtype != 1 {
-				udp_msg = udp_msg[:TLV.TLV_length]
+				udp_msg = udp_msg[TLV.TLV_length:]
 				continue
 			}
 			msg.Time = time.Now()
